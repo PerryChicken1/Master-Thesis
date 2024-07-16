@@ -1,6 +1,7 @@
 import pandas as pd
 import pyogrio
 import os
+import random
 import pandas.api.types as ptypes
 import numpy as np
 import warnings
@@ -11,6 +12,7 @@ from sklearn.metrics import mean_absolute_percentage_error, r2_score, explained_
 from matplotlib import pyplot as plt
 from scipy.stats import beta
 from custom_score_functions import log_ratio
+from robust_regression import Torrent
 
 # MAIN BANDIT CLASS
 
@@ -59,10 +61,11 @@ class bandit:
         self.rewards            = []
         self.sampled_C          = []
         
-        # clusters and TTV split
+        # clusters, TTV split, priors
         self.clean_clusters()
         self.generate_clusters(features)
         self.ttv_split()
+        self.instantiate_priors()
 
         # model and score function
         self.model              = PoissonRegressor() # Lasso(tol=1e-2)
@@ -117,11 +120,6 @@ class bandit:
         # save clusters
         for cluster_name in unique_clusters:
             self.clusters.append((feature_name, cluster_name))
-
-        # instantiate prior distributions
-        self.num_clusters       = len(self.clusters)
-        self.alphas             = np.ones(self.num_clusters)
-        self.betas              = np.ones(self.num_clusters)
             
     def generate_clusters(self, features: dict):
         """
@@ -132,6 +130,14 @@ class bandit:
         """
         for feature, n_bins in features.items():
             self.generate_cluster(feature, n_bins)
+
+    def instantiate_priors(self):
+        """
+        Instantiates prior distributions for Thompson sampling. Beta(1,1)
+        """
+        self.num_clusters       = len(self.clusters)
+        self.alphas             = np.ones(self.num_clusters)
+        self.betas              = np.ones(self.num_clusters)
         
     def ttv_split(self):
         """
@@ -151,6 +157,20 @@ class bandit:
         self.hidden_indices = hidden_indices.index.tolist()
         self.test_indices   = test_indices.index.tolist()
         self.val_indices    = val_indices.index.tolist()
+
+    def t_v_shuffle(self):
+        """
+        Shuffle hidden and validation indices.
+        """
+        # combine 'n' shuffle
+        combined                = self.hidden_indices + self.val_indices
+        random.shuffle(combined)
+
+        new_v_indices           = combined[:len(self.hidden_indices)]
+        new_h_indices           = combined[len(self.hidden_indices):]
+
+        self.hidden_indices     = new_h_indices
+        self.val_indices        = new_v_indices
 
     def sample_reward_probabilities(self):
         """
@@ -346,6 +366,38 @@ class bandit:
             
             t += 1
 
+    def run_TORRENT(self):
+        """
+        Run TORRENT method to benchmark MABS.
+        """
+        # find T 'inliers'
+        a                       = self.T / len(self.dataset)
+
+        self.train_indices      = self.hidden_indices[:]
+
+        # train / test split
+        X_train_tor             = self.dataset[self.dataset.index.isin(self.train_indices)][self.x].to_numpy()
+        y_train_tor             = self.dataset[self.dataset.index.isin(self.train_indices)][self.y].to_numpy()
+        X_test_tor              = self.dataset[self.dataset.index.isin(self.test_indices)][self.x].to_numpy()
+        y_test_tor              = self.dataset[self.dataset.index.isin(self.test_indices)][self.y].to_numpy()
+
+        # fit torrent
+        torrent                 = Torrent(a)
+        torrent.fit(X_train_tor, y_train_tor)
+
+        # inliers
+        X_inliers_tor           = X_train_tor[torrent.inliers]
+        y_inliers_tor           = y_train_tor[torrent.inliers]
+
+        # score model fit on inliers
+        self.model.fit(X_inliers_tor, y_inliers_tor)
+        y_pred_tor              = self.model.predict(X_test_tor)
+        torrent_score           = self.score_prediction(y_test_tor, y_pred_tor)
+
+        # store score
+        n_tests                 = (self.T // self.test_freq)
+        self.test_scores        = [torrent_score] * n_tests
+
     def run_MABS(self):
         """
         Run the multi-armed bandit selection algorithm.
@@ -364,7 +416,11 @@ class bandit:
                 j_batch.append(j)
 
             r = self.compute_reward()
-            if t % self.test_freq == 0: self.compute_test_score()
+
+            if t % self.test_freq == 0: 
+                self.compute_test_score()
+                self.t_v_shuffle()
+                
             self.update_beta_params(reward=r, j_batch=j_batch)
 
             # self.under_the_hood(pi, j, self.current_score, self.prev_score, r) #TODO: remove
@@ -419,11 +475,11 @@ class bandit:
 
     def eval_test_performance(self, n_runs:int = 1, which: str = "MABS"):
         """
-        Compute average test scores over n_runs for MABS, full model or random selector.
+        Compute average test scores over n_runs for MABS or one of the baselines.
 
         INPUTS:
         n_runs: number of times to repeat the algorithms
-        which: whether to evaluate 'MABS', 'rb' or 'full'
+        which: whether to evaluate 'MABS', 'rb', 'TORRENT' or 'full'
         
         OUTPUTS:
         avg_scores: score at every test time (np.ndarray)
@@ -439,6 +495,7 @@ class bandit:
             if which == 'MABS': self.run_MABS()
             elif which == 'rb': self.run_random_baseline()
             elif which == 'full': self.run_full_model()
+            elif which == 'TORRENT': self.run_TORRENT()
 
             test_scores         = np.sum((test_scores , self.test_scores), axis=0)
 
@@ -474,10 +531,12 @@ class bandit:
         n_runs: number of times to repeat the algorithms
         """
         # random baseline, MABS with all features and full model
-        avg_scores_full         = self.eval_test_performance(1, "full")
+        avg_scores_full         = self.eval_test_performance(n_runs, "full")
         avg_scores_rb           = self.eval_test_performance(n_runs, "rb")
+        avg_scores_TORRENT      = self.eval_test_performance(n_runs, "TORRENT")
         avg_scores_MABS         = self.eval_test_performance(n_runs, "MABS")
-        avg_scores_dict         = {'Random baseline': avg_scores_rb, 'MABS': avg_scores_MABS, 'Full model': avg_scores_full}
+        avg_scores_dict         = {'Random baseline': avg_scores_rb, 'MABS': avg_scores_MABS\
+                                   , 'Full model': avg_scores_full, 'TORRENT': avg_scores_TORRENT}
 
         # each individual feature
         if len(self.features) > 1:
@@ -580,7 +639,7 @@ class lazy_bandit(bandit):
                  , hidden_indices: list, test_indices: list, val_indices: list\
                  , T: int=1000, batch_size: float=1, test_freq: int=10):
 
-        super().__init__(dataset, x, y, features, T, batch_size, 1, 0, 0, test_freq)
+        super().__init__(dataset, x, y, features, T, batch_size, 0, 0, 0, test_freq) # TODO: replace 0 -> 1 if issues
         
         # copy to avoid mutation issues
         self.init_hidden_indices= hidden_indices[:]
@@ -603,9 +662,41 @@ class lazy_bandit(bandit):
         # restore hidden indices
         self.hidden_indices     = self.init_hidden_indices[:]
 
+# WHETHER TO SHUFFLE DATA OR ACCEPT TTV SPLIT (NOT USED)
+
+def bandit_shuffler(shuffle:bool = True):
+    """
+    Whether to shuffle data for sub-bandit or accept a TTV split.
+    Use case is ND_bandit.
+
+    INPUTS:
+    shuffle: True or False
+
+    OUTPUTS:
+    instance of class with shuffle implemented (or not)
+    """
+
+    def class_shuffler(cls):
+        """
+        INPUTS:
+        cls: class
+
+        OUTPUTS:
+        class with desired parent
+        """
+
+        parent = bandit if shuffle else lazy_bandit
+
+        class shuffle_child(parent):
+            pass
+            
+        return shuffle_child
+    
+    return class_shuffler
+
 # ND BANDIT PERMITS N-DIMENSIONAL CLASSES
 
-class ND_bandit(lazy_bandit):
+class ND_bandit(bandit):
     """
     Bandit permitting n-dimensional classes (i.e., comprising n features).
     All features are crossed to generate clusters.
@@ -617,20 +708,20 @@ class ND_bandit(lazy_bandit):
     features: along which to cluster df, including n_bins if numeric
     T: number of train points to sample before terminating (must be < frac_train * len(dataset))
     batch_size: number of points to sample before computing reward
-    hidden_indices: indices of datapoints eligible for training
-    test_indices: indices of datapoints for testing
-    val_indices: indices of datapoints for validation
+    frac_train: fraction of dataset for training
+    frac_test: fraction of dataset for testing
+    frac_val: fraction of dataset for validation
     test_freq: frequency at which to evaluate the model fit on test set
     """
     def __init__(self, dataset: pd.DataFrame, x: str, y: str, features: dict\
-                 , hidden_indices: list, test_indices: list, val_indices: list\
-                 , T: int=1000, batch_size: float=1, test_freq: int=10):
+                 , T: int=1000, batch_size: float=1, frac_train: float=0.5, frac_test: float=0.48\
+                 , frac_val: float=0.02, test_freq: int=10):
   
         # instantiate for mapping clusters to features
         self.cluster_dict       = dict()
 
-        super().__init__(dataset, x, y, features, hidden_indices, test_indices, val_indices,T, batch_size, test_freq)
-
+        super().__init__(dataset=dataset, x=x, y=y, features=features, T=T, batch_size=batch_size, frac_train=frac_train\
+                         , frac_test=frac_test, frac_val=frac_val, test_freq=test_freq)
 
     def generate_clusters(self, features: dict):
         """
@@ -700,7 +791,11 @@ class ND_bandit(lazy_bandit):
         """
         # filter where feature == fixed_val
         indices         = [idx for idx, feat_dict in self.cluster_dict.items() if feat_dict["cluster_ID_" + feature] == fixed_val]
-        labels          = [f"{feature} = {value}" for idx in indices for feature, value in self.cluster_dict[idx].items()]
+        
+        # concatenate labels
+        label_pieces    = [f"{feature} = {value}" for idx in indices for feature, value in self.cluster_dict[idx].items()]
+        feat_count      = len(self.features)
+        labels          = [', '.join(label_pieces[i:i+feat_count]) for i in range(0, len(label_pieces), feat_count)] 
 
         # get relevant alphas & betas
         alphas          = self.alphas[indices]
@@ -718,6 +813,6 @@ class ND_bandit(lazy_bandit):
         plt.ylabel("Density")
         plt.title(f"Sampling distributions at t = {self.T}")
         plt.suptitle(f"Feature {feature} = {fixed_val}")
-        plt.legend()
+        plt.legend(fontsize='small')
         plt.show()
 

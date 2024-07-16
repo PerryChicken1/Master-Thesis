@@ -2,9 +2,8 @@ import numpy as np
 
 def log_ratio(y: np.ndarray, y_hat: np.ndarray):
     """
-    The log ratio is a symmetric and relative accuracy score (Tofallis)
+    The log ratio is a symmetric and relative accuracy score (Tofallis, 2015)
     """
-    
     # compute quotient
     log_quotient    = np.log(y_hat/y)
 
