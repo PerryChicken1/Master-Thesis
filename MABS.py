@@ -331,6 +331,10 @@ class bandit:
         self.alphas             = np.ones(self.num_clusters)
         self.betas              = np.ones(self.num_clusters)
 
+        # reset model, if possible
+        try: self.model.reset_model()
+        except AttributeError: print("Model reset not possible")
+
         self.ttv_split()
 
     def run_full_model(self):
@@ -440,7 +444,7 @@ class bandit:
         plt.plot(times, scores, markersize=2, *args, **kwargs)
         plt.xlabel("Time step t")
         plt.ylabel(f"{self.score.__name__}")
-        plt.title("Regression model performance over time")
+        plt.title(f"Model performance over time")
 
     def plot_beta_dist(self, feature: str, *args, **kwargs):
         """
