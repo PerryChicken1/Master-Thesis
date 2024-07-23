@@ -13,12 +13,61 @@ def load_data():
     RETURNS:
     data: inner join between features and labels on index
     """
-
     os.chdir(r"C:\Users\nial\polybox - Nial Perry (nperry@student.ethz.ch)@polybox.ethz.ch\Nial MT")
-    new_features    = pd.read_csv("nial_features_2020-v1.csv")
-    new_labels      = pd.read_csv("nial_labels_2020-v1.csv")
 
-    data            = new_features.join(new_labels)
+    column_types    = {
+    "B01": "float64",
+    "B02": "float64",
+    "B03": "float64",
+    "B04": "float64",
+    "B05": "float64",
+    "B06": "float64",
+    "B07": "float64",
+    "B08": "float64",
+    "B8A": "float64",
+    "B09": "float64",
+    "B11": "float64",
+    "B12": "float64",
+    "s2_num_days": "float64",
+    "s2_doy_cos":"float64",
+    "s2_doy_sin":"float64",
+    "lat_cos": "float64",
+    "lat_sin": "float64",
+    "lon_cos": "float64",
+    "lon_sin": "float64",
+    "gedi_num_days": "float64",
+    "gedi_doy_cos": "float64",
+    "gedi_doy_sin": "float64",
+    "agbd_se": "float64",
+    "elev_lowes": "float64",
+    "pft_class": "category",
+    "region_cla": "category",
+    "rh98": "float64",
+    "selected_a": "category",
+    "sensitivit": "float64",
+    "solar_elev": "float64",
+    "urban_prop": "float64",
+    "alos_hh": "float64",
+    "alos_hv": "float64",
+    "ch": "float64",
+    "ch_std": "float64",
+    "lc_cos": "float64",
+    "lc_sin": "float64",
+    "lc_prob": "float64",
+    "dem": "float64",
+    "agbd": "float64",
+    "tile_name":"category",
+    "colour": "category"
+}
+    
+    # COLOURING
+    data            = pd.read_csv("df_global.csv", dtype=column_types)
+
+    # NO COLOURING
+    # new_features    = pd.read_csv("nial_features_2020-v1.csv")
+    # new_labels      = pd.read_csv("nial_labels_2020-v1.csv")
+
+    # data            = new_features.join(new_labels)
     return data
 
 def get_tile_proportions(data: pd.DataFrame):

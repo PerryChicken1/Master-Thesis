@@ -274,6 +274,9 @@ class bandit:
 
         y_test_hat  = self.model.predict(X_test)
 
+        # print(f"Shape of y test:{y_test.shape}")
+        # print(f"Shape of y predictions:{y_test_hat.shape}")
+
         # negative or near-zero predictions are rounded up
         # y_test_hat  = np.maximum(y_test_hat, 0.001)
 
@@ -331,9 +334,9 @@ class bandit:
         self.alphas             = np.ones(self.num_clusters)
         self.betas              = np.ones(self.num_clusters)
 
-        # reset model, if possible
+        # reset model, if necessary
         try: self.model.reset_model()
-        except AttributeError: print("Model reset not possible")
+        except AttributeError: pass # print("Model reset not possible")
 
         self.ttv_split()
 
@@ -619,53 +622,6 @@ class crafty_bandit(bandit):
         self.dataset["is_corrupted"]    = self.dataset["is_corrupted"].astype('category')
         self.features['is_corrupted']   = None
 
-# LAZY BANDIT DOES NOT PERFORM TTV SPLIT
-
-class lazy_bandit(bandit):
-    """
-    Like bandit, but too lazy to shuffle the data. 
-    User specifies hidden (train), validation and test indices.
-
-    INPUTS:
-    dataset: includes columns x and y
-    x: name(s) of independent variable(s)
-    y: column name of dependent variable
-    features: along which to cluster df, including n_bins if numeric
-    T: number of train points to sample before terminating (must be < frac_train * len(dataset))
-    batch_size: number of points to sample before computing reward
-    hidden_indices: indices of datapoints eligible for training
-    test_indices: indices of datapoints for testing
-    val_indices: indices of datapoints for validation
-    test_freq: frequency at which to evaluate the model fit on test set
-    """
-    
-    def __init__(self, dataset: pd.DataFrame, x: str, y: str, features: dict\
-                 , hidden_indices: list, test_indices: list, val_indices: list\
-                 , T: int=1000, batch_size: float=1, test_freq: int=10):
-
-        super().__init__(dataset, x, y, features, T, batch_size, 0, 0, 0, test_freq) # TODO: replace 0 -> 1 if issues
-        
-        # copy to avoid mutation issues
-        self.init_hidden_indices= hidden_indices[:]
-        self.hidden_indices     = hidden_indices
-        self.test_indices       = test_indices
-        self.val_indices        = val_indices
-        
-    def ttv_split(self):
-        """
-        Overwrite ttv_split() to do nothing
-        """
-        pass
-
-    def reset(self):
-        """
-        Restore initial hidden indices with reset()
-        """
-        super().reset()
-
-        # restore hidden indices
-        self.hidden_indices     = self.init_hidden_indices[:]
-
 # WHETHER TO SHUFFLE DATA OR ACCEPT TTV SPLIT (NOT USED)
 
 def bandit_shuffler(shuffle:bool = True):
@@ -742,7 +698,8 @@ class ND_bandit(bandit):
 
         # unique combinations
         dataset_clusters                        = self.dataset.filter(like='cluster_ID_')
-        unique_combinations                     = dataset_clusters.drop_duplicates().reset_index(drop=True)
+        unique_combinations                     = dataset_clusters.drop_duplicates().copy(deep=True) 
+        unique_combinations.reset_index(drop=True, inplace=True)
 
         # map cluster to feature values
         for idx, row in unique_combinations.iterrows():
@@ -750,10 +707,12 @@ class ND_bandit(bandit):
             row_dict                            = row.to_dict()
             self.cluster_dict[idx]              = row_dict
         
+
         # 1D -> ND clusters
         unique_combinations['ND_cluster']       = unique_combinations.index
         dataset_merged                          = pd.merge(self.dataset, unique_combinations, on=list(dataset_clusters.columns), how='left')
         dataset_merged.drop(dataset_clusters.columns, axis=1, inplace=True)
+        dataset_merged.set_index(self.dataset.index, inplace=True) # maintain original index
 
         # delete unit clusters
         self.clean_clusters()
@@ -820,3 +779,49 @@ class ND_bandit(bandit):
         plt.legend(fontsize='small')
         plt.show()
 
+# LAZY BANDIT DOES NOT PERFORM TTV SPLIT
+
+class lazy_bandit(ND_bandit):
+    """
+    Like bandit, but too lazy to shuffle the data. 
+    User specifies hidden (train), validation and test indices.
+
+    INPUTS:
+    dataset: includes columns x and y
+    x: name(s) of independent variable(s)
+    y: column name of dependent variable
+    features: along which to cluster df, including n_bins if numeric
+    T: number of train points to sample before terminating (must be < frac_train * len(dataset))
+    batch_size: number of points to sample before computing reward
+    hidden_indices: indices of datapoints eligible for training
+    test_indices: indices of datapoints for testing
+    val_indices: indices of datapoints for validation
+    test_freq: frequency at which to evaluate the model fit on test set
+    """
+    
+    def __init__(self, dataset: pd.DataFrame, x: str, y: str, features: dict\
+                 , hidden_indices: list, test_indices: list, val_indices: list\
+                 , T: int=1000, batch_size: float=1, test_freq: int=10):
+
+        super().__init__(dataset, x, y, features, T, batch_size, 0, 0, 0, test_freq)
+        
+        # copy to avoid mutation issues
+        self.init_hidden_indices= hidden_indices[:]
+        self.hidden_indices     = hidden_indices
+        self.test_indices       = test_indices
+        self.val_indices        = val_indices
+        
+    def ttv_split(self):
+        """
+        Overwrite ttv_split() to do nothing
+        """
+        pass
+
+    def reset(self):
+        """
+        Restore initial hidden indices with reset()
+        """
+        super().reset()
+
+        # restore hidden indices
+        self.hidden_indices     = self.init_hidden_indices[:]

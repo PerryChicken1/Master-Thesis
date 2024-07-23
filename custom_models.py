@@ -36,7 +36,11 @@ class MLP(nn.Module):
         self.layers         =   nn.Sequential(
                         nn.Linear(n_predictors, 64),
                         nn.ReLU(),
-                        nn.Linear(64, 32),
+                        nn.Linear(64, 128),
+                        nn.ReLU(),
+                        nn.Linear(128, 64),
+                        nn.ReLU(),
+                        nn.Linear(64,32),
                         nn.ReLU(),
                         nn.Linear(32, 1),
                         nn.ReLU()
@@ -68,7 +72,7 @@ class MLP(nn.Module):
         y: labels
         """
         # clean slate
-        self.reset_model_parameters()
+        # self.reset_model_parameters()
 
         # DataLoader
         X_tensor        = self.tensorize(X)
@@ -105,10 +109,11 @@ class MLP(nn.Module):
 
             epoch_loss /= n_iter
             scheduler.step(epoch_loss)
+            self.lr     = scheduler.get_last_lr() # track lr
 
             # intermittent updates
             if self.t % self.print_freq == 0: 
-                print(f'Timestep {self.t}. Epoch [{epoch+1}/{self.num_epochs}], Training loss: {epoch_loss:.4f}')
+                print(f'Timestep {self.t}. Epoch [{epoch+1}/{self.num_epochs}], Training loss: {epoch_loss:.4f}, Current learning rate: {self.lr}')
             
         self.t += 1
 
@@ -138,6 +143,5 @@ class MLP(nn.Module):
         self.reset_model_parameters()
         self.t          = 0
         self.lr         = self.init_lr
-
-
+        print(f"MLP model reset")
 
