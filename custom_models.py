@@ -1,4 +1,3 @@
-
 import numpy as np
 import torch
 from torch import nn
@@ -11,7 +10,7 @@ from torch.optim import lr_scheduler, Adam
 
 class MLP(nn.Module):
     
-    def __init__(self, n_predictors: int=12, num_epochs: int=5, lr: float=0.01, print_freq: int=100):
+    def __init__(self, n_predictors: int=12, num_epochs: int=5, lr: float=0.01, print_freq: int=10, with_scheduler=True):
 
         """
         A simple three-layer perceptron model.
@@ -20,6 +19,7 @@ class MLP(nn.Module):
         n_predictors: number of predictors
         num_epochs: for training at time t
         lr: initial learning rate
+        print_freq: frequency (in MABS batches) at which to print updates
         """
 
         super().__init__()
@@ -29,23 +29,31 @@ class MLP(nn.Module):
         self.init_lr        = lr
         self.lr             = lr
         self.print_freq     = print_freq
-        self.t              = 0
-                
-        self.loss           = nn.MSELoss()
+        self.with_scheduler = with_scheduler
+        self.fit_count      = 0
 
         self.layers         =   nn.Sequential(
                         nn.Linear(n_predictors, 64),
                         nn.ReLU(),
-                        nn.Linear(64, 128),
-                        nn.ReLU(),
-                        nn.Linear(128, 64),
-                        nn.ReLU(),
+                        # nn.Linear(64, 128),
+                        # nn.ReLU(),
+                        # nn.Linear(128, 64),
+                        # nn.ReLU(),
                         nn.Linear(64,32),
                         nn.ReLU(),
                         nn.Linear(32, 1),
                         nn.ReLU()
                         )
         
+        self.path          = r"C:\Users\nial\Documents\GitHub\Master-Thesis\State dict\MLP_state_dict.pt"  
+        self.save_initial_state()
+
+    def save_initial_state(self):
+        """
+        Save initial parameters for later resets. 
+        """
+        torch.save(self.state_dict(), self.path)
+
     def forward(self, x):
         output  = self.layers(x)
         return torch.flatten(output)
@@ -72,7 +80,7 @@ class MLP(nn.Module):
         y: labels
         """
         # clean slate
-        # self.reset_model_parameters()
+        self.reset_model_parameters()
 
         # DataLoader
         X_tensor        = self.tensorize(X)
@@ -84,7 +92,10 @@ class MLP(nn.Module):
         self.train()
 
         optimizer       = Adam(self.parameters(), lr=self.lr)
-        scheduler       = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=2)
+        loss            = nn.MSELoss()
+
+        if self.with_scheduler: 
+            scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.2, patience=3)
 
         # train
         for epoch in range(self.num_epochs):
@@ -99,7 +110,7 @@ class MLP(nn.Module):
                 optimizer.zero_grad()
 
                 outputs             = self.forward(X_batch)
-                loss_batch          = self.loss(outputs, y_batch)
+                loss_batch          = loss(outputs, y_batch)
 
                 loss_batch.backward()
                 optimizer.step()
@@ -108,14 +119,16 @@ class MLP(nn.Module):
                 n_iter              += 1
 
             epoch_loss /= n_iter
-            scheduler.step(epoch_loss)
-            self.lr     = scheduler.get_last_lr() # track lr
+
+            if self.with_scheduler: 
+                scheduler.step(epoch_loss)
+                self.lr     = scheduler.get_last_lr()[0] # track lr
 
             # intermittent updates
-            if self.t % self.print_freq == 0: 
-                print(f'Timestep {self.t}. Epoch [{epoch+1}/{self.num_epochs}], Training loss: {epoch_loss:.4f}, Current learning rate: {self.lr}')
+            if self.fit_count % self.print_freq == 0: 
+                print(f'Batch {self.fit_count}. Epoch [{epoch+1}/{self.num_epochs}], Training loss: {epoch_loss:.4f}, lr: {self.lr}')
             
-        self.t += 1
+        self.fit_count += 1
 
     def predict(self, X: np.ndarray):
         """
@@ -132,16 +145,21 @@ class MLP(nn.Module):
         """
         Reset the model parameters.
         """
-        for layer in self.children():
-            if hasattr(layer, 'reset_parameters'):
-                layer.reset_parameters()
+        self.load_state_dict(torch.load(self.path))
         
     def reset_model(self):
         """
         Reset the model parameters and attributes.
         """
         self.reset_model_parameters()
-        self.t          = 0
+        self.fit_count  = 0
         self.lr         = self.init_lr
         print(f"MLP model reset")
 
+    def __repr__(self):
+        """
+        Add input parameters to representation string.
+        """
+        super_repr      = super().__repr__()
+        param_repr      = f"num_epochs = {self.num_epochs}, \n lr = {self.init_lr}, \n with_scheduler = {self.with_scheduler}"
+        return super_repr + "\n" + param_repr
