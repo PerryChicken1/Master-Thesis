@@ -81,6 +81,7 @@ class Torrent(BaseRobustRegression):
         if not 0 < a < 1:
             raise ValueError("'a' must be in the range (0, 1).")
         self.a = a
+        self.iter_count = 0
         self.max_iter = max_iter
         self.predicted_inliers = []
 
@@ -101,6 +102,7 @@ class Torrent(BaseRobustRegression):
         self.predicted_inliers.append(self.inliers)
 
         for _ in range(self.max_iter):
+            self.iter_count += 1
             self.model = sm.OLS(y[self.inliers], x[self.inliers]).fit()
 
             err = np.linalg.norm(y - self.model.predict(x).reshape(n, -1), axis=1)

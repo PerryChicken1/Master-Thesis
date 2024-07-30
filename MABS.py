@@ -30,11 +30,12 @@ class bandit:
     frac_train: fraction of dataset for training
     frac_test: fraction of dataset for testing
     frac_val: fraction of dataset for validation
-    test_freq: frequency at which to evaluate the model fit on test set
+    test_freq: frequency (in batches) at which to evaluate the model fit on test set
+    model: object with fit() and predict() methods
     """
 
-    def __init__(self, dataset: pd.DataFrame, x: str, y: str, features: dict, T: int=1000, batch_size: float=1\
-                 , frac_train: float=0.5, frac_test: float=0.48, frac_val: float=0.02, test_freq: int=10):
+    def __init__(self, dataset: pd.DataFrame, x: str, y: str, features: dict, T: int=1000, batch_size: int=10\
+                 , frac_train: float=0.5, frac_test: float=0.48, frac_val: float=0.02, test_freq: int=5, model=PoissonRegressor()):
 
         # store inputs
         self.dataset            = dataset
@@ -47,6 +48,7 @@ class bandit:
         self.frac_test          = frac_test
         self.frac_val           = frac_val
         self.test_freq          = test_freq
+        self.test_freq_t        = test_freq * batch_size
 
         # instantiate lists
         self.hidden_indices     = []
@@ -60,6 +62,7 @@ class bandit:
         self.test_scores        = []
         self.rewards            = []
         self.sampled_C          = []
+        self.test_times         = range(self.test_freq_t, T+1, self.test_freq_t)
         
         # clusters, TTV split, priors
         self.clean_clusters()
@@ -67,9 +70,8 @@ class bandit:
         self.ttv_split()
         self.instantiate_priors()
 
-        # model and score function
-        self.model              = PoissonRegressor() # Lasso(tol=1e-2)
-        self.predictor_count    = 1 if type(x) is str else len(x)
+       # model and score function
+        self.model              = model # Lasso(tol=1e-2)
         self.score              = mean_squared_error # mean_absolute_percentage_error # r2_score
         self.lower_is_better    = True
 
@@ -131,11 +133,25 @@ class bandit:
         for feature, n_bins in features.items():
             self.generate_cluster(feature, n_bins)
 
+    @property
+    def num_clusters(self):
+        """
+        Number of clusters (read-only property)
+        """
+        return len(self.clusters)
+    
+    @property
+    def predictor_count(self):
+        """
+        Number of predictors in x (read-only property)
+        """
+        if type(self.x) is str: return 1
+        else: return len(self.x)
+
     def instantiate_priors(self):
         """
         Instantiates prior distributions for Thompson sampling. Beta(1,1)
         """
-        self.num_clusters       = len(self.clusters)
         self.alphas             = np.ones(self.num_clusters)
         self.betas              = np.ones(self.num_clusters)
         
@@ -166,8 +182,8 @@ class bandit:
         combined                = self.hidden_indices + self.val_indices
         random.shuffle(combined)
 
-        new_v_indices           = combined[:len(self.hidden_indices)]
-        new_h_indices           = combined[len(self.hidden_indices):]
+        new_h_indices           = combined[:len(self.hidden_indices)]
+        new_v_indices           = combined[len(self.hidden_indices):]
 
         self.hidden_indices     = new_h_indices
         self.val_indices        = new_v_indices
@@ -179,19 +195,25 @@ class bandit:
         pi = np.array([np.random.beta(a, b) for a, b in zip(self.alphas, self.betas)]).T
         return pi
 
-    def sample_datapoint(self, pi: np.ndarray):
+    def sample_batch(self, pi: np.ndarray, batch_size:int):
         """
-        Sample a datapoint and add to the training dataset. Return cluster sampled.
+        Sample batch_size datapoints and add them the training dataset. Return cluster sampled.
 
         INPUTS:
         pi: reward probabilities
+        batch_size: number of datapoints to sample
+
+        OUTPUTS:
+        j: cluster from which sample is taken
+        sample_size: size of sample taken
         """
         # find first non-empty cluster from which to sample
         pi_descending   = np.argsort(pi)[::-1]
         counter         = 0
+        cluster_size    = 0
 
-        # runs at least once and until a non-empty cluster is found
-        while counter == 0 or cluster.empty:
+        # runs at least once and until a cluster of size batch_size is found
+        while cluster_size < batch_size:
             j               = pi_descending[counter]
             feature, value  = self.clusters[j]
             
@@ -199,16 +221,20 @@ class bandit:
             cluster         = self.dataset[(self.dataset[feature] == value)]
             cluster         = cluster[cluster.index.isin(self.hidden_indices)]
 
-            counter += 1
-        
-        # pick datapoint
-        cluster_size    = len(cluster.index)
-        s_index         = np.random.randint(0, cluster_size)
-        s               = cluster.index[s_index]
+            cluster_size    = len(cluster.index)
+            counter         +=1
 
-        self.train_indices.append(s)
-        try: self.hidden_indices.remove(s)
-        except ValueError: raise ValueError(f"s = {s}")
+        # train indices
+        s_indices       = np.random.choice(a=cluster_size, size=batch_size, replace=False)
+        
+        # store indices
+        for idx in s_indices: 
+            s           = cluster.index[idx]
+            self.train_indices.append(s)
+
+            try: self.hidden_indices.remove(s)
+            except ValueError: raise ValueError(f"s = {s}")
+        
         self.sampled_C.append(j)
         return j
     
@@ -283,17 +309,16 @@ class bandit:
         test_score  = self.score_prediction(y_test, y_test_hat)
         self.test_scores.append(test_score)
 
-    def update_beta_params(self, reward: int, j_batch: int):
+    def update_beta_params(self, reward: int, j: int):
         """
         Update parameters for cluster sampling distributions based on reward.
 
         INPUTS:
         reward: reward from latest datapoint selection
-        j: indices of clusters from which datapoints selected
+        j: index of cluster from which datapoints selected
         """
-        for j in j_batch:
-            if reward == 1: self.alphas[j] += 1
-            else:           self.betas[j] += 1
+        if reward == 1: self.alphas[j] += 1
+        else:           self.betas[j] += 1
 
     def under_the_hood(self, pi:np.ndarray, j:int, current_score: float, prev_score: float, r:float):
         """
@@ -351,34 +376,36 @@ class bandit:
         self.compute_test_score()
 
         # pad test scores for plotting
-        n_tests                 = (self.T // self.test_freq)
+        n_tests                 = len(self.test_times)
         self.test_scores        = self.test_scores * n_tests
     
     def run_random_baseline(self):
         """
         Run a random datapoint selector to benchmark MABS.
         """
-        t = 1
+        t = 0
 
         # run for T time steps
-        while t <= self.T:
+        while t < self.T:
             
+            # select random datapoint
             s   = np.random.choice(self.hidden_indices)
             self.train_indices.append(s)
             self.hidden_indices.remove(s)
 
-            _   = self.compute_reward()
-            
-            if t % self.test_freq == 0: self.compute_test_score()
-            
+            # increment
             t += 1
+
+            # test score
+            if t % self.test_freq_t == 0: 
+                self.compute_test_score()
 
     def run_TORRENT(self):
         """
         Run TORRENT method to benchmark MABS.
         """
         # find T 'inliers'
-        a                       = self.T / len(self.dataset)
+        a                       = self.T / len(self.hidden_indices)
 
         self.train_indices      = self.hidden_indices[:]
 
@@ -402,37 +429,38 @@ class bandit:
         torrent_score           = self.score_prediction(y_test_tor, y_pred_tor)
 
         # store score
-        n_tests                 = (self.T // self.test_freq)
+        n_tests                 = len(self.test_times)
         self.test_scores        = [torrent_score] * n_tests
+
+        # store torrent to see iter_count & # inliers. TODO: will remove later
+        self.torrent            = torrent
 
     def run_MABS(self):
         """
         Run the multi-armed bandit selection algorithm.
         """
-        t = 1
+        t               = 0
 
-        # run for T time steps
-        while t <= self.T:
+        # collect T observations
+        while t < self.T:
 
-            j_batch = []
+            # sample from reward dists
+            pi              = self.sample_reward_probabilities()
 
-            # run for batch_size obs before computing reward
-            for _ in range(self.batch_size):
-                pi  = self.sample_reward_probabilities()
-                j   = self.sample_datapoint(pi)
-                j_batch.append(j)
+            # transfer hidden -> train indices
+            j               = self.sample_batch(pi, self.batch_size)
 
-            r = self.compute_reward()
+            # reward & belief update
+            r               = self.compute_reward()
+            self.update_beta_params(reward=r, j=j)
 
-            if t % self.test_freq == 0: 
+            # update counters
+            t               += self.batch_size
+
+            # test score
+            if t % self.test_freq_t == 0: 
                 self.compute_test_score()
                 self.t_v_shuffle()
-                
-            self.update_beta_params(reward=r, j_batch=j_batch)
-
-            # self.under_the_hood(pi, j, self.current_score, self.prev_score, r) #TODO: remove
-
-            t += 1
 
     def plot_scores(self, times:np.ndarray, scores: np.ndarray, *args, **kwargs):
         """
@@ -462,8 +490,8 @@ class bandit:
         categories      = [cat for (name, cat) in self.clusters if name == feature_name]
 
         # get relevant alphas & betas
-        alphas  = self.alphas[j_indices]
-        betas   = self.betas[j_indices]
+        alphas          = self.alphas[j_indices]
+        betas           = self.betas[j_indices]
 
         # plot         
         x = np.arange(100) / 100
@@ -491,8 +519,8 @@ class bandit:
         OUTPUTS:
         avg_scores: score at every test time (np.ndarray)
         """
-        test_scores     = np.zeros((self.T // self.test_freq))
-        current_run     = 1
+        current_run = 1
+        test_scores = np.zeros(len(self.test_times))
 
         while current_run <= n_runs:
             
@@ -504,7 +532,7 @@ class bandit:
             elif which == 'full': self.run_full_model()
             elif which == 'TORRENT': self.run_TORRENT()
 
-            test_scores         = np.sum((test_scores , self.test_scores), axis=0)
+            test_scores = np.sum((test_scores , self.test_scores), axis=0)
 
             current_run += 1
 
@@ -512,22 +540,24 @@ class bandit:
 
         return avg_scores
     
-    def plot_test_performance(self, avg_scores_dict: dict, ylim: tuple):
+    def plot_test_performance(self, avg_scores_dict: dict, ylim: tuple, n_runs: int):
         """
         Plot outputs from eval_test_performance().
 
         INPUTS:
         avg_scores_dict: {label: avg_scores}
         ylim: (y_min, y_max)
+        n_runs: number of runs of eval_test_performance()
         """
         plt.figure()
-        times   = [t for t in range(0, self.T + 1)]
+        colors = {'Full model':'green', 'Random baseline':'blue', 'TORRENT':'red', 'MABS':'orange'}
 
         for label, avg_scores in avg_scores_dict.items():
-            self.plot_scores(times=times[self.test_freq::self.test_freq], scores=avg_scores, label=label)
+            self.plot_scores(times=self.test_times, scores=avg_scores, label=label, color=colors[label])
 
         plt.ylim(ylim)
         plt.legend()
+        plt.suptitle(f"N runs = {n_runs}")
         plt.show()
     
     def benchmark_MABS(self, n_runs:int = 1):
@@ -538,12 +568,18 @@ class bandit:
         n_runs: number of times to repeat the algorithms
         """
         # random baseline, MABS with all features and full model
-        avg_scores_full         = self.eval_test_performance(n_runs, "full")
-        avg_scores_rb           = self.eval_test_performance(n_runs, "rb")
-        avg_scores_TORRENT      = self.eval_test_performance(n_runs, "TORRENT")
-        avg_scores_MABS         = self.eval_test_performance(n_runs, "MABS")
-        avg_scores_dict         = {'Random baseline': avg_scores_rb, 'MABS': avg_scores_MABS\
-                                   , 'Full model': avg_scores_full, 'TORRENT': avg_scores_TORRENT}
+        avg_scores_full             = self.eval_test_performance(1, "full")
+        avg_scores_rb               = self.eval_test_performance(n_runs, "rb")
+        avg_scores_TORRENT          = self.eval_test_performance(1, "TORRENT")
+        avg_scores_MABS             = self.eval_test_performance(n_runs, "MABS")
+
+        avg_scores_dict             = {'Full model': avg_scores_full, 'Random baseline': avg_scores_rb\
+                                   , 'TORRENT': avg_scores_TORRENT, 'MABS': avg_scores_MABS}
+
+        terminal_scores_dict        = {key:value[-1] for key, value in avg_scores_dict.items()}
+
+        self.avg_scores_dict        = avg_scores_dict
+        self.terminal_scores_dict   = terminal_scores_dict
 
         # each individual feature
         if len(self.features) > 1:
@@ -566,7 +602,27 @@ class bandit:
         
         # y_max                   = min([np.max(value) for _, value in avg_scores_dict.items()]) #TODO
         
-        self.plot_test_performance(avg_scores_dict, (y_min, y_max))    
+        self.plot_test_performance(avg_scores_dict, (y_min, y_max), n_runs)
+    
+    def __repr__(self):
+        """
+        String representation of instantiated object.
+
+        OUTPUT:
+        (partial) string of object call
+        """
+        class_name = self.__class__.__name__
+        return f"""
+        {class_name}(
+        data, 
+        x={self.x!r}, 
+        y={self.y!r}, 
+        features={self.features!r},
+        T={self.T!r}, 
+        batch_size={self.batch_size!r}, 
+        test_freq={self.test_freq!r}, 
+        model={self.model.__repr__()})
+        """
 
 # BANDIT ADVERSARIALLY ATTACKS TRAINING DATA
 
@@ -584,14 +640,15 @@ class crafty_bandit(bandit):
     frac_train: fraction of dataset for training
     frac_test: fraction of dataset for testing
     frac_val: fraction of dataset for validation
-    test_freq: frequency at which to evaluate the model fit on test set
+    test_freq: frequency (in batches) at which to evaluate the model fit on test set
     p_corrupt: proportion of training observations to corrupt
     """
-    def __init__(self, dataset: pd.DataFrame, x: str, y: str, features: dict, T: int=1000, batch_size: float=1\
-                 , frac_train: float=0.5, frac_test: float=0.48, frac_val: float=0.02, test_freq: int=10, p_corrupt: float=0.1):
+    def __init__(self, dataset: pd.DataFrame, x: str, y: str, features: dict, T: int=1000, batch_size: float=10\
+                 , frac_train: float=0.5, frac_test: float=0.48, frac_val: float=0.02, test_freq: int=5, p_corrupt: float=0.1
+                 , model=PoissonRegressor()):
 
         super().__init__(dataset=dataset, x=x, y=y, features=features, T=T, batch_size=batch_size\
-                 , frac_train=frac_train, frac_test=frac_test, frac_val=frac_val, test_freq=test_freq)
+                 , frac_train=frac_train, frac_test=frac_test, frac_val=frac_val, test_freq=test_freq, model=model)
 
         # clusters and TTV split
         self.ttv_split()
@@ -671,17 +728,18 @@ class ND_bandit(bandit):
     frac_train: fraction of dataset for training
     frac_test: fraction of dataset for testing
     frac_val: fraction of dataset for validation
-    test_freq: frequency at which to evaluate the model fit on test set
+    test_freq: frequency (in batches) at which to evaluate the model fit on test set
+    model: object with fit() and predict() methods
     """
     def __init__(self, dataset: pd.DataFrame, x: str, y: str, features: dict\
-                 , T: int=1000, batch_size: float=1, frac_train: float=0.5, frac_test: float=0.48\
-                 , frac_val: float=0.02, test_freq: int=10):
+                 , T: int=1000, batch_size: float=10, frac_train: float=0.5, frac_test: float=0.48\
+                 , frac_val: float=0.02, test_freq: int=5, model = PoissonRegressor()):
   
         # instantiate for mapping clusters to features
         self.cluster_dict       = dict()
 
         super().__init__(dataset=dataset, x=x, y=y, features=features, T=T, batch_size=batch_size, frac_train=frac_train\
-                         , frac_test=frac_test, frac_val=frac_val, test_freq=test_freq)
+                         , frac_test=frac_test, frac_val=frac_val, test_freq=test_freq, model=model)
 
     def generate_clusters(self, features: dict):
         """
@@ -796,24 +854,31 @@ class lazy_bandit(ND_bandit):
     hidden_indices: indices of datapoints eligible for training
     test_indices: indices of datapoints for testing
     val_indices: indices of datapoints for validation
-    test_freq: frequency at which to evaluate the model fit on test set
+    test_freq: frequency (in batches) at which to evaluate the model fit on test set
+    model: object with fit() and predict() methods
     """
     
     def __init__(self, dataset: pd.DataFrame, x: str, y: str, features: dict\
                  , hidden_indices: list, test_indices: list, val_indices: list\
-                 , T: int=1000, batch_size: float=1, test_freq: int=10):
+                 , T: int=1000, batch_size: float=10, test_freq: int=5, model= PoissonRegressor()):
 
-        super().__init__(dataset, x, y, features, T, batch_size, 0, 0, 0, test_freq)
+        super().__init__(dataset, x, y, features, T, batch_size, 0, 0, 0, test_freq, model)
         
         # copy to avoid mutation issues
         self.init_hidden_indices= hidden_indices[:]
         self.hidden_indices     = hidden_indices
         self.test_indices       = test_indices
         self.val_indices        = val_indices
-        
+
     def ttv_split(self):
         """
         Overwrite ttv_split() to do nothing
+        """
+        pass
+
+    def t_v_shuffle(self):
+        """
+        Overwrite t_v_shuffle() to do nothing
         """
         pass
 
