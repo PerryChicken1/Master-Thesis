@@ -114,12 +114,13 @@ def load_specs(DD: str, MM: str, YYYY:str,  h: str, m: str, s: str):
 
     return specs
 
-def lazy_bandit_feature_search(features: dict, tuple_size: int=3, n_runs: int=10, **kwargs):
+def lazy_bandit_feature_search(features: dict, model, tuple_size: int=3, n_runs: int=10, **kwargs):
     """
     Benchmark MABS method for several feature combinations using ND bandit.
 
     INPUTS:
     features: superset of features to choose from
+    model: model with fit() and predict() methods to assign to bandit; inc. hyperparameters specified 
     tuple_size: number of features to pass to the agent. <= len(features)
     n_runs: argument to benchmark_MABS()
     kwargs: other arguments to bandit()
@@ -137,7 +138,6 @@ def lazy_bandit_feature_search(features: dict, tuple_size: int=3, n_runs: int=10
 
         # instantiate and benchmark bandit
         bandit          = lazy_bandit(features=features_c, **kwargs)
+        bandit.model    = model
         description     = ", ".join(features_c.keys())
         benchmark_bandit(bandit=bandit, n_runs=n_runs, description=description)
-
-

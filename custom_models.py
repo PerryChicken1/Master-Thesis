@@ -95,7 +95,10 @@ class MLP(nn.Module):
         loss            = nn.MSELoss()
 
         if self.with_scheduler: 
-            scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.2, patience=3)
+            factor      = 0.5
+            patience    = 3
+            min_lr      = self.init_lr * (factor ** 3) 
+            scheduler   = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=factor, patience=patience, min_lr=min_lr)
 
         # train
         for epoch in range(self.num_epochs):

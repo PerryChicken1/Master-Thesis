@@ -31,10 +31,11 @@ class bandit:
     frac_test: fraction of dataset for testing
     frac_val: fraction of dataset for validation
     test_freq: frequency (in batches) at which to evaluate the model fit on test set
+    model: object with fit() and predict() methods
     """
 
     def __init__(self, dataset: pd.DataFrame, x: str, y: str, features: dict, T: int=1000, batch_size: int=10\
-                 , frac_train: float=0.5, frac_test: float=0.48, frac_val: float=0.02, test_freq: int=5):
+                 , frac_train: float=0.5, frac_test: float=0.48, frac_val: float=0.02, test_freq: int=5, model=PoissonRegressor()):
 
         # store inputs
         self.dataset            = dataset
@@ -70,7 +71,7 @@ class bandit:
         self.instantiate_priors()
 
        # model and score function
-        self.model              = PoissonRegressor() # Lasso(tol=1e-2)
+        self.model              = model # Lasso(tol=1e-2)
         self.score              = mean_squared_error # mean_absolute_percentage_error # r2_score
         self.lower_is_better    = True
 
@@ -643,10 +644,11 @@ class crafty_bandit(bandit):
     p_corrupt: proportion of training observations to corrupt
     """
     def __init__(self, dataset: pd.DataFrame, x: str, y: str, features: dict, T: int=1000, batch_size: float=10\
-                 , frac_train: float=0.5, frac_test: float=0.48, frac_val: float=0.02, test_freq: int=5, p_corrupt: float=0.1):
+                 , frac_train: float=0.5, frac_test: float=0.48, frac_val: float=0.02, test_freq: int=5, p_corrupt: float=0.1
+                 , model=PoissonRegressor()):
 
         super().__init__(dataset=dataset, x=x, y=y, features=features, T=T, batch_size=batch_size\
-                 , frac_train=frac_train, frac_test=frac_test, frac_val=frac_val, test_freq=test_freq)
+                 , frac_train=frac_train, frac_test=frac_test, frac_val=frac_val, test_freq=test_freq, model=model)
 
         # clusters and TTV split
         self.ttv_split()
@@ -727,16 +729,17 @@ class ND_bandit(bandit):
     frac_test: fraction of dataset for testing
     frac_val: fraction of dataset for validation
     test_freq: frequency (in batches) at which to evaluate the model fit on test set
+    model: object with fit() and predict() methods
     """
     def __init__(self, dataset: pd.DataFrame, x: str, y: str, features: dict\
                  , T: int=1000, batch_size: float=10, frac_train: float=0.5, frac_test: float=0.48\
-                 , frac_val: float=0.02, test_freq: int=5):
+                 , frac_val: float=0.02, test_freq: int=5, model = PoissonRegressor()):
   
         # instantiate for mapping clusters to features
         self.cluster_dict       = dict()
 
         super().__init__(dataset=dataset, x=x, y=y, features=features, T=T, batch_size=batch_size, frac_train=frac_train\
-                         , frac_test=frac_test, frac_val=frac_val, test_freq=test_freq)
+                         , frac_test=frac_test, frac_val=frac_val, test_freq=test_freq, model=model)
 
     def generate_clusters(self, features: dict):
         """
@@ -852,13 +855,14 @@ class lazy_bandit(ND_bandit):
     test_indices: indices of datapoints for testing
     val_indices: indices of datapoints for validation
     test_freq: frequency (in batches) at which to evaluate the model fit on test set
+    model: object with fit() and predict() methods
     """
     
     def __init__(self, dataset: pd.DataFrame, x: str, y: str, features: dict\
                  , hidden_indices: list, test_indices: list, val_indices: list\
-                 , T: int=1000, batch_size: float=10, test_freq: int=5):
+                 , T: int=1000, batch_size: float=10, test_freq: int=5, model= PoissonRegressor()):
 
-        super().__init__(dataset, x, y, features, T, batch_size, 0, 0, 0, test_freq)
+        super().__init__(dataset, x, y, features, T, batch_size, 0, 0, 0, test_freq, model)
         
         # copy to avoid mutation issues
         self.init_hidden_indices= hidden_indices[:]
