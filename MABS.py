@@ -13,6 +13,7 @@ from matplotlib import pyplot as plt
 from scipy.stats import beta
 from custom_score_functions import log_ratio
 from robust_regression import Torrent
+from custom_models import MLP
 
 # MAIN BANDIT CLASS
 
@@ -35,7 +36,7 @@ class bandit:
     """
 
     def __init__(self, dataset: pd.DataFrame, x: str, y: str, features: dict, T: int=1000, batch_size: int=10\
-                 , frac_train: float=0.5, frac_test: float=0.48, frac_val: float=0.02, test_freq: int=5, model=PoissonRegressor()):
+                 , frac_train: float=0.5, frac_test: float=0.48, frac_val: float=0.02, test_freq: int=5, model=MLP()):
 
         # store inputs
         self.dataset            = dataset
@@ -71,8 +72,8 @@ class bandit:
         self.instantiate_priors()
 
        # model and score function
-        self.model              = model # Lasso(tol=1e-2)
-        self.score              = mean_squared_error # mean_absolute_percentage_error # r2_score
+        self.model              = model
+        self.score              = mean_squared_error # log_ratio
         self.lower_is_better    = True
 
     def clean_clusters(self):
@@ -159,7 +160,7 @@ class bandit:
         """
         Split dataset into train, test and validation components.
         """
-        data_size = len(self.dataset.index)
+        data_size           = len(self.dataset.index)
         assert np.isclose(self.frac_train + self.frac_test + self.frac_val, 1.0), "Train, test, validation fractions must sum to 1"
 
         pos_train           = int(data_size * self.frac_train)
@@ -528,7 +529,15 @@ class bandit:
 
             self.reset()
             if which == 'MABS': self.run_MABS()
-            elif which == 'rb': self.run_random_baseline()
+            elif which == 'rb': 
+                self.run_random_baseline()
+                if current_run == 1:    
+                    self.ts1 = self.test_scores[:] #TODO: remove
+                    self.ti1 = self.train_indices[:]
+                elif current_run == 2:  
+                    self.ts2 = self.test_scores[:]
+                    self.ti2 = self.train_indices[:]
+
             elif which == 'full': self.run_full_model()
             elif which == 'TORRENT': self.run_TORRENT()
 
@@ -560,7 +569,7 @@ class bandit:
         plt.suptitle(f"N runs = {n_runs}")
         plt.show()
     
-    def benchmark_MABS(self, n_runs:int = 1):
+    def benchmark_MABS(self, n_runs:int = 1): #TODO: re-include MABS
         """
         Plot average test scores over n_runs for random selector, full model and MABS.
 
@@ -645,7 +654,7 @@ class crafty_bandit(bandit):
     """
     def __init__(self, dataset: pd.DataFrame, x: str, y: str, features: dict, T: int=1000, batch_size: float=10\
                  , frac_train: float=0.5, frac_test: float=0.48, frac_val: float=0.02, test_freq: int=5, p_corrupt: float=0.1
-                 , model=PoissonRegressor()):
+                 , model=MLP()):
 
         super().__init__(dataset=dataset, x=x, y=y, features=features, T=T, batch_size=batch_size\
                  , frac_train=frac_train, frac_test=frac_test, frac_val=frac_val, test_freq=test_freq, model=model)
@@ -733,7 +742,7 @@ class ND_bandit(bandit):
     """
     def __init__(self, dataset: pd.DataFrame, x: str, y: str, features: dict\
                  , T: int=1000, batch_size: float=10, frac_train: float=0.5, frac_test: float=0.48\
-                 , frac_val: float=0.02, test_freq: int=5, model = PoissonRegressor()):
+                 , frac_val: float=0.02, test_freq: int=5, model = MLP()):
   
         # instantiate for mapping clusters to features
         self.cluster_dict       = dict()
@@ -860,7 +869,7 @@ class lazy_bandit(ND_bandit):
     
     def __init__(self, dataset: pd.DataFrame, x: str, y: str, features: dict\
                  , hidden_indices: list, test_indices: list, val_indices: list\
-                 , T: int=1000, batch_size: float=10, test_freq: int=5, model= PoissonRegressor()):
+                 , T: int=1000, batch_size: float=10, test_freq: int=5, model= MLP()):
 
         super().__init__(dataset, x, y, features, T, batch_size, 0, 0, 0, test_freq, model)
         

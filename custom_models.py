@@ -3,6 +3,7 @@ import torch
 from torch import nn
 from torch.utils.data import TensorDataset, DataLoader
 from torch.optim import lr_scheduler, Adam
+from custom_score_functions import LogRatioLoss
 
 # CUSTOM MODELS NEED fit(), predict() AND reset_model() METHODS
 
@@ -10,7 +11,8 @@ from torch.optim import lr_scheduler, Adam
 
 class MLP(nn.Module):
     
-    def __init__(self, n_predictors: int=12, num_epochs: int=5, lr: float=0.01, print_freq: int=10, with_scheduler=True):
+    def __init__(self, n_predictors: int=12, num_epochs: int=5, lr: float=0.01\
+                 , print_freq: int=10, with_scheduler=True, loss_fn=LogRatioLoss):
 
         """
         A simple three-layer perceptron model.
@@ -20,6 +22,7 @@ class MLP(nn.Module):
         num_epochs: for training at time t
         lr: initial learning rate
         print_freq: frequency (in MABS batches) at which to print updates
+        with_scheduler: use learning rate scheduler?
         """
 
         super().__init__()
@@ -30,6 +33,7 @@ class MLP(nn.Module):
         self.lr             = lr
         self.print_freq     = print_freq
         self.with_scheduler = with_scheduler
+        self.loss_fn        = loss_fn
         self.fit_count      = 0
 
         self.layers         =   nn.Sequential(
@@ -92,12 +96,12 @@ class MLP(nn.Module):
         self.train()
 
         optimizer       = Adam(self.parameters(), lr=self.lr)
-        loss            = nn.MSELoss()
+        loss_fn         = self.loss_fn
 
         if self.with_scheduler: 
             factor      = 0.5
             patience    = 3
-            min_lr      = self.init_lr * (factor ** 3) 
+            min_lr      = self.init_lr * (factor ** 4) 
             scheduler   = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=factor, patience=patience, min_lr=min_lr)
 
         # train
@@ -113,7 +117,7 @@ class MLP(nn.Module):
                 optimizer.zero_grad()
 
                 outputs             = self.forward(X_batch)
-                loss_batch          = loss(outputs, y_batch)
+                loss_batch          = loss_fn(y_batch, outputs)
 
                 loss_batch.backward()
                 optimizer.step()
