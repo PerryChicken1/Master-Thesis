@@ -360,7 +360,7 @@ class bandit:
         self.alphas             = np.ones(self.num_clusters)
         self.betas              = np.ones(self.num_clusters)
 
-        # reset model, if necessary
+        # reset model, if possible
         try: self.model.reset_model()
         except AttributeError: pass # print("Model reset not possible")
 
@@ -529,15 +529,7 @@ class bandit:
 
             self.reset()
             if which == 'MABS': self.run_MABS()
-            elif which == 'rb': 
-                self.run_random_baseline()
-                if current_run == 1:    
-                    self.ts1 = self.test_scores[:] #TODO: remove
-                    self.ti1 = self.train_indices[:]
-                elif current_run == 2:  
-                    self.ts2 = self.test_scores[:]
-                    self.ti2 = self.train_indices[:]
-
+            elif which == 'rb': self.run_random_baseline()
             elif which == 'full': self.run_full_model()
             elif which == 'TORRENT': self.run_TORRENT()
 
@@ -577,9 +569,9 @@ class bandit:
         n_runs: number of times to repeat the algorithms
         """
         # random baseline, MABS with all features and full model
-        avg_scores_full             = self.eval_test_performance(1, "full")
+        avg_scores_full             = self.eval_test_performance(1, "full")     # no variation between runs
         avg_scores_rb               = self.eval_test_performance(n_runs, "rb")
-        avg_scores_TORRENT          = self.eval_test_performance(1, "TORRENT")
+        avg_scores_TORRENT          = self.eval_test_performance(1, "TORRENT")  # no variation between runs
         avg_scores_MABS             = self.eval_test_performance(n_runs, "MABS")
 
         avg_scores_dict             = {'Full model': avg_scores_full, 'Random baseline': avg_scores_rb\

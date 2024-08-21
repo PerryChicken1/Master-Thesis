@@ -3,7 +3,7 @@ import torch
 from torch import nn
 from torch.utils.data import TensorDataset, DataLoader
 from torch.optim import lr_scheduler, Adam
-from custom_score_functions import LogRatioLoss
+from custom_score_functions import LogRatioLoss, NUGGET
 
 # CUSTOM MODELS NEED fit(), predict() AND reset_model() METHODS
 
@@ -12,7 +12,7 @@ from custom_score_functions import LogRatioLoss
 class MLP(nn.Module):
     
     def __init__(self, n_predictors: int=12, num_epochs: int=5, lr: float=0.01\
-                 , print_freq: int=10, with_scheduler=True, loss_fn=LogRatioLoss):
+                 , print_freq: int=10, with_scheduler=True, loss_fn=nn.MSELoss):
 
         """
         A simple three-layer perceptron model.
@@ -36,32 +36,32 @@ class MLP(nn.Module):
         self.loss_fn        = loss_fn
         self.fit_count      = 0
 
-        self.layers         =   nn.Sequential(
-                        nn.Linear(n_predictors, 64),
-                        nn.ReLU(),
-                        # nn.Linear(64, 128),
-                        # nn.ReLU(),
-                        # nn.Linear(128, 64),
-                        # nn.ReLU(),
-                        nn.Linear(64,32),
-                        nn.ReLU(),
-                        nn.Linear(32, 1),
-                        nn.ReLU()
-                        )
+        self.layers         = self.build_model()
         
         self.path          = r"C:\Users\nial\Documents\GitHub\Master-Thesis\State dict\MLP_state_dict.pt"  
         self.save_initial_state()
 
+    def build_model(self):
+        """
+        Instantiate model layers.
+        """
+        layers = nn.Sequential(
+                        nn.Linear(self.n_predictors, 64),
+                        nn.ReLU(),
+                        nn.Linear(64, 32),
+                        nn.ReLU(),
+                        nn.Linear(32, 1),
+                        nn.Softplus()
+                        )
+
+        return layers
+    
     def save_initial_state(self):
         """
         Save initial parameters for later resets. 
         """
         torch.save(self.state_dict(), self.path)
 
-    def forward(self, x):
-        output  = self.layers(x)
-        return torch.flatten(output)
-    
     @staticmethod
     def tensorize(array:np.ndarray):
         """
@@ -74,7 +74,11 @@ class MLP(nn.Module):
         tensor: tensor with float32s
         """
         return torch.tensor(array, dtype=torch.float32)
-
+    
+    def forward(self, x):
+        output  = self.layers(x)
+        return torch.flatten(output)
+    
     def fit(self, X: np.ndarray, y: np.ndarray):
         """
         Run training loop at time t.
@@ -117,6 +121,7 @@ class MLP(nn.Module):
                 optimizer.zero_grad()
 
                 outputs             = self.forward(X_batch)
+                
                 loss_batch          = loss_fn(y_batch, outputs)
 
                 loss_batch.backward()
@@ -148,17 +153,23 @@ class MLP(nn.Module):
         with torch.no_grad():
             return self.forward(X_tensor)
         
-    def reset_model_parameters(self):
+    def reset_model_parameters(self, reinit_params: bool=False):
         """
         Reset the model parameters.
+
+        INPUTS:
+        reset_model: whether to reinitialise parameters in the layers
         """
-        self.load_state_dict(torch.load(self.path))
+        if reinit_params: 
+            self.layers = self.build_model()
+        else:
+            self.load_state_dict(torch.load(self.path))
         
     def reset_model(self):
         """
         Reset the model parameters and attributes.
         """
-        self.reset_model_parameters()
+        self.reset_model_parameters(reinit_params=True)
         self.fit_count  = 0
         self.lr         = self.init_lr
         print(f"MLP model reset")

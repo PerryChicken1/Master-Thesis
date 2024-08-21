@@ -57,17 +57,13 @@ def load_data():
     "dem": "float64",
     "agbd": "float64",
     "tile_name":"category",
-    "colour": "category"
+    "colour": "category",
+    "new_colour": "category"
 }
     
     # COLOURING
     data            = pd.read_csv("df_global.csv", dtype=column_types)
 
-    # NO COLOURING
-    # new_features    = pd.read_csv("nial_features_2020-v1.csv")
-    # new_labels      = pd.read_csv("nial_labels_2020-v1.csv")
-
-    # data            = new_features.join(new_labels)
     return data
 
 def get_tile_proportions(data: pd.DataFrame):
@@ -218,12 +214,30 @@ def request_user_input():
 
     return user_input
 
+def request_user_parameters():
+    """
+    Ask user for the parameters to determine the TTV split.
+    """
+    prop_train      = float(input("Train proportion (0-1):"))
+    print(f"Train proportion: {prop_train}")
+    prop_test       = float(input("Test proportion: (0-1):"))
+    print(f"Test proportion: {prop_test}")
+    prop_val        = float(input("Validation proportion (0-1):"))
+    print(f"Validation proportion: {prop_val}")
+
+    assert np.isclose(prop_train + prop_test + prop_val, 1), "Train, test, validation fractions must sum to 1"
+
+    return prop_train, prop_test, prop_val
+
 if __name__ == "__main__":
 
-    print("Running")
-    
+    print("TTV split initialised")
+
     data        = load_data()
     print("Loaded data!")
+
+    prop_train, prop_test, prop_val\
+                = request_user_parameters()
     
     # re-split until user is satisfied
     user_input  = "N"
@@ -232,16 +246,16 @@ if __name__ == "__main__":
         proportions = get_tile_proportions(data)
         print("Computed proportions!")
     
-        colouring   = colour_tiles(proportions)
+        colouring   = colour_tiles(proportions, prop_train, prop_test, prop_val)
         print("Coloured tiles")
 
         plot_agbd_distributions(colouring, data)
-        summarise_agbd_distributions(data)
+        # summarise_agbd_distributions(data)
         print("Compared agbd distributions!")
 
         user_input  = request_user_input()
     
-    fpath   = r"C:\Users\nial\OneDrive\ETH Zürich\Master Thesis\colouring.pkl"
+    fpath   = rf"C:\Users\nial\OneDrive\ETH Zürich\Master Thesis\colouring-Tr={round(prop_train,2)}-Te={round(prop_test,2)}-V={round(prop_val, 2)}.pkl"
 
     with open(fpath, "wb") as output_file:
         pkl.dump(colouring, output_file)
