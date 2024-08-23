@@ -117,6 +117,7 @@ class Torrent(BaseRobustRegression):
 
 
 class BFS(BaseRobustRegression):
+
     """Brute Force Search (BFS) algorithm for regression to find the best subset of inliers.
 
     Attributes:

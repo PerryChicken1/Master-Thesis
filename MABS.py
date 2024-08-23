@@ -11,9 +11,11 @@ from sklearn.linear_model import LinearRegression, Ridge, Lasso, PoissonRegresso
 from sklearn.metrics import mean_absolute_percentage_error, r2_score, explained_variance_score, mean_squared_error # , root_mean_squared_error
 from matplotlib import pyplot as plt
 from scipy.stats import beta
+from scipy.spatial.distance import euclidean
 from custom_score_functions import log_ratio
 from robust_regression import Torrent
 from custom_models import MLP
+from homemade_benchmarks import k_center_greedy
 
 # MAIN BANDIT CLASS
 
@@ -104,7 +106,7 @@ class bandit:
         # numeric
         if ptypes.is_numeric_dtype(cluster_column):
 
-            # ?
+            # continuous
             cluster_ids, bins   = pd.qcut(cluster_column, q=n_bins, labels=False, duplicates='drop', retbins=True)
             cluster_ids         = cluster_ids.apply(lambda c_id: bins[c_id])
 
@@ -198,7 +200,7 @@ class bandit:
 
     def sample_batch(self, pi: np.ndarray, batch_size:int):
         """
-        Sample batch_size datapoints and add them the training dataset. Return cluster sampled.
+        Sample batch_size datapoints and add them to the training dataset. Return cluster sampled.
 
         INPUTS:
         pi: reward probabilities
@@ -395,7 +397,7 @@ class bandit:
             self.hidden_indices.remove(s)
 
             # increment
-            t += 1
+            t   += 1
 
             # test score
             if t % self.test_freq_t == 0: 
@@ -435,12 +437,32 @@ class bandit:
 
         # store torrent to see iter_count & # inliers. TODO: will remove later
         self.torrent            = torrent
+    
+    def run_k_centers_greedy(self):
+        """
+        Run the greedy k centers algorithm.
+        """
+        # instantiate k center agent
+        hidden_data         = self.dataset.loc[self.hidden_indices]
+        k_center_agent      = k_center_greedy(hidden_data, self.x, self.T, euclidean)
+
+        # pick core-set
+        while k_center_agent.coreset_size_ <  k_center_agent.budget:
+            
+            u               = k_center_agent.pick_center()
+
+            self.train_indices.append(u)
+            self.hidden_indices.remove(u)
+
+            if k_center_agent.coreset_size_ % self.test_freq_t == 0:
+
+                self.compute_test_score()
 
     def run_MABS(self):
         """
         Run the multi-armed bandit selection algorithm.
         """
-        t               = 0
+        t   = 0
 
         # collect T observations
         while t < self.T:
@@ -532,6 +554,7 @@ class bandit:
             elif which == 'rb': self.run_random_baseline()
             elif which == 'full': self.run_full_model()
             elif which == 'TORRENT': self.run_TORRENT()
+            elif which == 'KCG': self.run_k_centers_greedy()
 
             test_scores = np.sum((test_scores , self.test_scores), axis=0)
 
@@ -551,7 +574,7 @@ class bandit:
         n_runs: number of runs of eval_test_performance()
         """
         plt.figure()
-        colors = {'Full model':'green', 'Random baseline':'blue', 'TORRENT':'red', 'MABS':'orange'}
+        colors = {'Full model':'green', 'Random baseline':'blue', 'TORRENT':'red', 'KCG': 'fuchsia', 'MABS':'orange'}
 
         for label, avg_scores in avg_scores_dict.items():
             self.plot_scores(times=self.test_times, scores=avg_scores, label=label, color=colors[label])
@@ -561,7 +584,7 @@ class bandit:
         plt.suptitle(f"N runs = {n_runs}")
         plt.show()
     
-    def benchmark_MABS(self, n_runs:int = 1): #TODO: re-include MABS
+    def benchmark_MABS(self, n_runs:int = 1):
         """
         Plot average test scores over n_runs for random selector, full model and MABS.
 
@@ -569,13 +592,14 @@ class bandit:
         n_runs: number of times to repeat the algorithms
         """
         # random baseline, MABS with all features and full model
-        avg_scores_full             = self.eval_test_performance(1, "full")     # no variation between runs
+        avg_scores_full             = self.eval_test_performance(n_runs, "full")
         avg_scores_rb               = self.eval_test_performance(n_runs, "rb")
-        avg_scores_TORRENT          = self.eval_test_performance(1, "TORRENT")  # no variation between runs
+        avg_scores_TORRENT          = self.eval_test_performance(n_runs, "TORRENT")
+        avg_scores_KCG              = self.eval_test_performance(1, "KCG")
         avg_scores_MABS             = self.eval_test_performance(n_runs, "MABS")
 
-        avg_scores_dict             = {'Full model': avg_scores_full, 'Random baseline': avg_scores_rb\
-                                   , 'TORRENT': avg_scores_TORRENT, 'MABS': avg_scores_MABS}
+        avg_scores_dict             =  {'Full model': avg_scores_full, 'Random baseline': avg_scores_rb\
+                                   , 'TORRENT': avg_scores_TORRENT, 'KCG': avg_scores_KCG, 'MABS': avg_scores_MABS}
 
         terminal_scores_dict        = {key:value[-1] for key, value in avg_scores_dict.items()}
 

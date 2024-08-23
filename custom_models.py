@@ -56,6 +56,22 @@ class MLP(nn.Module):
 
         return layers
     
+    def update_architecture(self, new_architecture: nn.Sequential):
+        """
+        Update MLP architecture of self.
+
+        Args:
+            new_architecture: Sequential object of layers and activations
+        """
+        
+        def build_new_model():
+
+            return new_architecture
+        
+        self.build_model = build_new_model
+        self.reset_model()
+        self.save_initial_state()
+    
     def save_initial_state(self):
         """
         Save initial parameters for later resets. 
@@ -73,7 +89,8 @@ class MLP(nn.Module):
         OUTPUTS:
         tensor: tensor with float32s
         """
-        return torch.tensor(array, dtype=torch.float32)
+        if isinstance(array, torch.Tensor): return array
+        else: return torch.tensor(array, dtype=torch.float32)
     
     def forward(self, x):
         output  = self.layers(x)
@@ -157,8 +174,8 @@ class MLP(nn.Module):
         """
         Reset the model parameters.
 
-        INPUTS:
-        reset_model: whether to reinitialise parameters in the layers
+        Args:
+            reset_model: whether to reinitialise parameters in the layers
         """
         if reinit_params: 
             self.layers = self.build_model()
