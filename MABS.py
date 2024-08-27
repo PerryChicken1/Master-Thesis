@@ -595,11 +595,11 @@ class bandit:
         avg_scores_full             = self.eval_test_performance(n_runs, "full")
         avg_scores_rb               = self.eval_test_performance(n_runs, "rb")
         avg_scores_TORRENT          = self.eval_test_performance(n_runs, "TORRENT")
-        avg_scores_KCG              = self.eval_test_performance(1, "KCG")
+        # avg_scores_KCG              = self.eval_test_performance(1, "KCG")
         avg_scores_MABS             = self.eval_test_performance(n_runs, "MABS")
 
         avg_scores_dict             =  {'Full model': avg_scores_full, 'Random baseline': avg_scores_rb\
-                                   , 'TORRENT': avg_scores_TORRENT, 'KCG': avg_scores_KCG, 'MABS': avg_scores_MABS}
+                                   , 'TORRENT': avg_scores_TORRENT, 'MABS': avg_scores_MABS} #'KCG': avg_scores_KCG, 
 
         terminal_scores_dict        = {key:value[-1] for key, value in avg_scores_dict.items()}
 
