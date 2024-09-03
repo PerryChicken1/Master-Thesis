@@ -66,7 +66,24 @@ def load_data():
 
     return data
 
-def get_tile_proportions(data: pd.DataFrame):
+def get_ttv_indices(data: pd.DataFrame, colour_col: str='new_colour') -> tuple:
+    """
+    Get train (hidden), test and validation indices of dataframe.
+
+    Args:
+        data: with existing TTV partition
+        colour_col: name of column
+
+    Returns:
+        tuple of indices train, test, val (args to lazy_bandit)
+    """
+    train_indices   = data[data[colour_col] == 'train'].index.tolist()
+    test_indices    = data[data[colour_col] == 'test'].index.tolist()
+    val_indices     = data[data[colour_col] == 'val'].index.tolist()
+
+    return train_indices, test_indices, val_indices
+
+def get_tile_proportions(data: pd.DataFrame) -> pd.DataFrame:
     """
     Calculate proportion of observations with each tile name.
 
@@ -80,7 +97,7 @@ def get_tile_proportions(data: pd.DataFrame):
     proportions = vcs / vcs.sum()
     return proportions
 
-def colour_tiles(proportions: pd.Series, prop_train: float= 0.5, prop_test: float=0.48, prop_val: float=0.02, tol: float=0.01):
+def colour_tiles(proportions: pd.Series, prop_train: float= 0.5, prop_test: float=0.48, prop_val: float=0.02, tol: float=0.01) -> dict:
     """
     Colour tiles by 'train', 'test' or 'val' with the specified proportions of observations.
 
@@ -155,7 +172,7 @@ def colour_tiles(proportions: pd.Series, prop_train: float= 0.5, prop_test: floa
     print(f"Final proportions: train = {current_train_prop}, test = {current_test_prop}, val = {current_val_prop}")
     return colouring
 
-def plot_agbd_distributions(colouring:dict, data: pd.DataFrame):
+def plot_agbd_distributions(colouring:dict, data: pd.DataFrame) -> None:
     """
     Plot the distribution of agbd between train/ test/ validation subsets of the data.
 
@@ -180,7 +197,7 @@ def plot_agbd_distributions(colouring:dict, data: pd.DataFrame):
 
     plt.show()
 
-def summarise_agbd_distributions(data:pd.DataFrame):
+def summarise_agbd_distributions(data:pd.DataFrame) -> None:
     """
     Report quintiles of AGBD in colouring.
 
@@ -201,7 +218,7 @@ def summarise_agbd_distributions(data:pd.DataFrame):
     print("Validation set quintiles of agbd:")
     print(bins_val)
 
-def request_user_input():
+def request_user_input() -> str:
     """
     Ask user whether TTV split is satisfactory.
     """
@@ -214,7 +231,7 @@ def request_user_input():
 
     return user_input
 
-def request_user_parameters():
+def request_user_parameters() -> tuple:
     """
     Ask user for the parameters to determine the TTV split.
     """

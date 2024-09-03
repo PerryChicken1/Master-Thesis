@@ -154,3 +154,4 @@ class k_center_greedy:
                 print(f"Deque size: {self.distance_matrix.shape[-1]}")
 
         return self
+    

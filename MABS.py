@@ -1,11 +1,9 @@
 import pandas as pd
-import pyogrio
-import os
 import random
 import pandas.api.types as ptypes
 import numpy as np
-import warnings
 import pickle as pkl
+import torch
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression, Ridge, Lasso, PoissonRegressor
 from sklearn.metrics import mean_absolute_percentage_error, r2_score, explained_variance_score, mean_squared_error # , root_mean_squared_error
@@ -15,7 +13,7 @@ from scipy.spatial.distance import euclidean
 from custom_score_functions import log_ratio
 from robust_regression import Torrent
 from custom_models import MLP
-from homemade_benchmarks import k_center_greedy
+from k_center_greedy import k_center_greedy
 
 # MAIN BANDIT CLASS
 
@@ -137,14 +135,14 @@ class bandit:
             self.generate_cluster(feature, n_bins)
 
     @property
-    def num_clusters(self):
+    def num_clusters_(self):
         """
         Number of clusters (read-only property)
         """
         return len(self.clusters)
     
     @property
-    def predictor_count(self):
+    def predictor_count_(self):
         """
         Number of predictors in x (read-only property)
         """
@@ -155,8 +153,8 @@ class bandit:
         """
         Instantiates prior distributions for Thompson sampling. Beta(1,1)
         """
-        self.alphas             = np.ones(self.num_clusters)
-        self.betas              = np.ones(self.num_clusters)
+        self.alphas             = np.ones(self.num_clusters_)
+        self.betas              = np.ones(self.num_clusters_)
         
     def ttv_split(self):
         """
@@ -261,7 +259,7 @@ class bandit:
         y_val   = self.dataset[self.dataset.index.isin(self.val_indices)][self.y].to_numpy()
 
         # reshape if single feature
-        if self.predictor_count == 1: 
+        if self.predictor_count_ == 1: 
             X_train = X_train.reshape(-1, 1)
             X_val   = X_val.reshape(-1,1)
 
@@ -295,7 +293,7 @@ class bandit:
         y_test  = self.dataset[self.dataset.index.isin(self.test_indices)][self.y].to_numpy()
 
         # reshape if single feature
-        if self.predictor_count == 1: 
+        if self.predictor_count_ == 1: 
             X_train = X_train.reshape(-1, 1)
             X_test  = X_test.reshape(-1,1)
    
@@ -359,8 +357,8 @@ class bandit:
 
         self.prev_score         = -np.infty
         self.current_score      = -np.infty
-        self.alphas             = np.ones(self.num_clusters)
-        self.betas              = np.ones(self.num_clusters)
+        self.alphas             = np.ones(self.num_clusters_)
+        self.betas              = np.ones(self.num_clusters_)
 
         # reset model, if possible
         try: self.model.reset_model()
@@ -549,6 +547,10 @@ class bandit:
             
             print(f"Benchmarking run {current_run} for model {which}")
 
+            torch.manual_seed(current_run)
+            np.random.seed(current_run)
+            random.seed(current_run)
+
             self.reset()
             if which == 'MABS': self.run_MABS()
             elif which == 'rb': self.run_random_baseline()
@@ -595,11 +597,11 @@ class bandit:
         avg_scores_full             = self.eval_test_performance(n_runs, "full")
         avg_scores_rb               = self.eval_test_performance(n_runs, "rb")
         avg_scores_TORRENT          = self.eval_test_performance(n_runs, "TORRENT")
-        # avg_scores_KCG              = self.eval_test_performance(1, "KCG")
+        avg_scores_KCG              = self.eval_test_performance(n_runs, "KCG")
         avg_scores_MABS             = self.eval_test_performance(n_runs, "MABS")
 
         avg_scores_dict             =  {'Full model': avg_scores_full, 'Random baseline': avg_scores_rb\
-                                   , 'TORRENT': avg_scores_TORRENT, 'MABS': avg_scores_MABS} #'KCG': avg_scores_KCG, 
+                                   , 'TORRENT': avg_scores_TORRENT, 'KCG': avg_scores_KCG, 'MABS': avg_scores_MABS}
 
         terminal_scores_dict        = {key:value[-1] for key, value in avg_scores_dict.items()}
 
@@ -624,8 +626,6 @@ class bandit:
 
         y_min                   = min([np.min(value) for _, value in avg_scores_dict.items()])
         y_max                   = max([np.max(value) for _, value in avg_scores_dict.items()])
-        
-        # y_max                   = min([np.max(value) for _, value in avg_scores_dict.items()]) #TODO
         
         self.plot_test_performance(avg_scores_dict, (y_min, y_max), n_runs)
     
