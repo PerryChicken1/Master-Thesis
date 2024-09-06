@@ -4,6 +4,7 @@ import pandas.api.types as ptypes
 import numpy as np
 import pickle as pkl
 import torch
+import warnings
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression, Ridge, Lasso, PoissonRegressor
 from sklearn.metrics import mean_absolute_percentage_error, r2_score, explained_variance_score, mean_squared_error # , root_mean_squared_error
@@ -12,8 +13,10 @@ from scipy.stats import beta
 from scipy.spatial.distance import euclidean
 from custom_score_functions import log_ratio
 from robust_regression import Torrent
-from custom_models import MLP
+from custom_models import *
+from ll_coreset_selector import LL_coreset_selector
 from k_center_greedy import k_center_greedy
+from metadata_dists import metadata_dist_selector
 
 # MAIN BANDIT CLASS
 
@@ -149,6 +152,43 @@ class bandit:
         if type(self.x) is str: return 1
         else: return len(self.x)
 
+    def dataset_splitter(self, parts: list = ['hidden', 'train', 'test', 'validation']) -> np.ndarray:
+        """
+        Split dataset into hidden, train, test and validation parts. X before y, H -> Tr -> Te -> V.
+
+        Args:
+            parts: sub-list of ['hidden', 'train', 'test', 'validation'] specifying which arrays to return, in that order.
+
+        Returns:
+            return_tup: sub-tuple of (X_hidden, y_hidden, X_train, y_train, X_test, y_test, X_val, y_val)
+        """
+        assert all(part in ['hidden', 'train', 'test', 'validation'] for part in parts),\
+            "Invalid dataset part detected!"
+
+        return_tup = tuple()
+
+        if 'hidden' in parts:
+            X_hidden    = self.dataset[self.dataset.index.isin(self.hidden_indices)][self.x].to_numpy()
+            y_hidden    = self.dataset[self.dataset.index.isin(self.hidden_indices)][self.y].to_numpy()
+            return_tup  = (*return_tup, X_hidden, y_hidden)
+
+        if 'train' in parts:
+            X_train     = self.dataset[self.dataset.index.isin(self.train_indices)][self.x].to_numpy()
+            y_train     = self.dataset[self.dataset.index.isin(self.train_indices)][self.y].to_numpy()
+            return_tup  = (*return_tup, X_train, y_train)
+        
+        if 'test' in parts:
+            X_test      = self.dataset[self.dataset.index.isin(self.test_indices)][self.x].to_numpy()
+            y_test      = self.dataset[self.dataset.index.isin(self.test_indices)][self.y].to_numpy()
+            return_tup  = (*return_tup, X_test, y_test)
+
+        if 'validation' in parts:
+            X_val       = self.dataset[self.dataset.index.isin(self.val_indices)][self.x].to_numpy()
+            y_val       = self.dataset[self.dataset.index.isin(self.val_indices)][self.y].to_numpy()
+            return_tup  = (*return_tup, X_val, y_val)
+
+        return return_tup
+
     def instantiate_priors(self):
         """
         Instantiates prior distributions for Thompson sampling. Beta(1,1)
@@ -253,15 +293,13 @@ class bandit:
         """
         Compute reward with current train indices.
         """
-        X_train = self.dataset[self.dataset.index.isin(self.train_indices)][self.x].to_numpy()
-        y_train = self.dataset[self.dataset.index.isin(self.train_indices)][self.y].to_numpy()
-        X_val   = self.dataset[self.dataset.index.isin(self.val_indices)][self.x].to_numpy()
-        y_val   = self.dataset[self.dataset.index.isin(self.val_indices)][self.y].to_numpy()
+        X_train, y_train, X_val, y_val \
+                            = self.dataset_splitter(['train', 'validation'])
 
         # reshape if single feature
         if self.predictor_count_ == 1: 
-            X_train = X_train.reshape(-1, 1)
-            X_val   = X_val.reshape(-1,1)
+            X_train         = X_train.reshape(-1, 1)
+            X_val           = X_val.reshape(-1,1)
 
         self.X_train= X_train 
         self.model.fit(X_train, y_train)
@@ -287,10 +325,8 @@ class bandit:
         """
         Compute score on test set with current train indices.
         """
-        X_train = self.dataset[self.dataset.index.isin(self.train_indices)][self.x].to_numpy()
-        y_train = self.dataset[self.dataset.index.isin(self.train_indices)][self.y].to_numpy()
-        X_test  = self.dataset[self.dataset.index.isin(self.test_indices)][self.x].to_numpy()
-        y_test  = self.dataset[self.dataset.index.isin(self.test_indices)][self.y].to_numpy()
+        X_train, y_train, X_test, y_test \
+                    = self.dataset_splitter(['train', 'test'])
 
         # reshape if single feature
         if self.predictor_count_ == 1: 
@@ -360,8 +396,8 @@ class bandit:
         self.alphas             = np.ones(self.num_clusters_)
         self.betas              = np.ones(self.num_clusters_)
 
-        # reset model, if possible
-        try: self.model.reset_model()
+        # reinit model, if possible
+        try: self.model.reinit_model()
         except AttributeError: pass # print("Model reset not possible")
 
         self.ttv_split()
@@ -411,11 +447,9 @@ class bandit:
         self.train_indices      = self.hidden_indices[:]
 
         # train / test split
-        X_train_tor             = self.dataset[self.dataset.index.isin(self.train_indices)][self.x].to_numpy()
-        y_train_tor             = self.dataset[self.dataset.index.isin(self.train_indices)][self.y].to_numpy()
-        X_test_tor              = self.dataset[self.dataset.index.isin(self.test_indices)][self.x].to_numpy()
-        y_test_tor              = self.dataset[self.dataset.index.isin(self.test_indices)][self.y].to_numpy()
-
+        X_train_tor, y_train_tor, X_test_tor, y_test_tor \
+                                = self.dataset_splitter(['train', 'test'])
+        
         # fit torrent
         torrent                 = Torrent(a)
         torrent.fit(X_train_tor, y_train_tor)
@@ -454,6 +488,80 @@ class bandit:
 
             if k_center_agent.coreset_size_ % self.test_freq_t == 0:
 
+                self.compute_test_score()
+    
+    def run_LL(self):
+        """
+        Run the loss learning method.
+        """
+        # lr are left as defaults
+        selector  = LL_coreset_selector(n_predictors=self.model.n_predictors, 
+                                        num_epochs=self.model.num_epochs, 
+                                        print_freq=self.model.print_freq, 
+                                        with_scheduler=self.model.with_scheduler, 
+                                        loss_fn=self.model.loss_fn,
+                                        FC_dim=32)
+
+        # select `self.batch_size` random datapoints to begin
+        init_indices    = random.sample(self.hidden_indices, self.batch_size)
+
+        for idx in init_indices:
+            self.train_indices.append(idx)
+            self.hidden_indices.remove(idx)
+
+        t               = self.batch_size
+
+        while t < self.T:
+            
+            # fit model to current coreset
+            X_hidden, _, X_train, y_train\
+                        = self.dataset_splitter(['hidden', 'train'])
+            selector    = selector.fit(X_train, y_train)
+
+            # estimate model loss on every hidden observation
+            losses      = selector.predict_losses(X_hidden)
+
+            # retrieve indices of hidden obs in descending order of loss
+            top_K_idx   = selector.top_K_losses(losses, K=self.batch_size, indices=self.hidden_indices)
+
+            # add the `batch_size` worst observations to the coreset
+            for idx in top_K_idx:
+                self.train_indices.append(idx)
+                self.hidden_indices.remove(idx)
+
+            t           += self.batch_size
+
+            if t % self.test_freq_t == 0:
+                self.compute_test_score()
+    
+    def run_metadist_selector(self):
+        """
+        Run meta-data distribution selector.
+        """
+        t                               = 0
+        group_column                    = 'ND_cluster'
+        K                               = self.batch_size
+
+        assert group_column in self.dataset.columns, f"Metadist selector requires that {group_column} be present in dataset"
+
+        # initialise
+        hidden_dataset                  = self.dataset[self.dataset.index.isin(self.hidden_indices)]
+        mds                             = metadata_dist_selector(hidden_dataset, self.T, group_column)
+        mds.dataset['probabilities']    = mds.compute_probabilities(mds.dataset, group_column)
+
+        # collect T observations
+        while t < self.T:
+
+            next_K_indices              = mds.select_next_K(mds.non_coreset_, K, 'probabilities')
+
+            for idx in next_K_indices:
+                self.hidden_indices.remove(idx)
+                self.train_indices.append(idx)
+            
+            t                           +=  K
+
+            # test score
+            if t % self.test_freq_t == 0:
                 self.compute_test_score()
 
     def run_MABS(self):
@@ -557,6 +665,8 @@ class bandit:
             elif which == 'full': self.run_full_model()
             elif which == 'TORRENT': self.run_TORRENT()
             elif which == 'KCG': self.run_k_centers_greedy()
+            elif which == 'LL': self.run_LL()
+            elif which == 'mds': self.run_metadist_selector()
 
             test_scores = np.sum((test_scores , self.test_scores), axis=0)
 
@@ -576,7 +686,9 @@ class bandit:
         n_runs: number of runs of eval_test_performance()
         """
         plt.figure()
-        colors = {'Full model':'green', 'Random baseline':'blue', 'TORRENT':'red', 'KCG': 'fuchsia', 'MABS':'orange'}
+        colors = {'Full model':'green', 'Random baseline':'blue', 'TORRENT':'red', 'KCG': 'fuchsia', 'MABS':'orange', 'LL':'olive', 'mds': 'aquamarine'}
+        
+        assert all(key in colors.keys() for key in avg_scores_dict.keys()), '`plot_test_performance` received unknown method'
 
         for label, avg_scores in avg_scores_dict.items():
             self.plot_scores(times=self.test_times, scores=avg_scores, label=label, color=colors[label])
@@ -597,11 +709,16 @@ class bandit:
         avg_scores_full             = self.eval_test_performance(n_runs, "full")
         avg_scores_rb               = self.eval_test_performance(n_runs, "rb")
         avg_scores_TORRENT          = self.eval_test_performance(n_runs, "TORRENT")
-        avg_scores_KCG              = self.eval_test_performance(n_runs, "KCG")
+        avg_scores_KCG              = self.eval_test_performance(n_runs, "KCG")    
         avg_scores_MABS             = self.eval_test_performance(n_runs, "MABS")
+        avg_scores_mds              = self.eval_test_performance(n_runs, 'mds')
+
+        if isinstance(self.model, MLP):   
+            avg_scores_LL           = self.eval_test_performance(n_runs, "LL")
 
         avg_scores_dict             =  {'Full model': avg_scores_full, 'Random baseline': avg_scores_rb\
-                                   , 'TORRENT': avg_scores_TORRENT, 'KCG': avg_scores_KCG, 'MABS': avg_scores_MABS}
+                                   , 'TORRENT': avg_scores_TORRENT, 'KCG': avg_scores_KCG, 'MABS': avg_scores_MABS\
+                                    , 'LL': avg_scores_LL, 'mds': avg_scores_mds}
 
         terminal_scores_dict        = {key:value[-1] for key, value in avg_scores_dict.items()}
 

@@ -1,17 +1,74 @@
 import numpy as np
 import torch
 import random
+from warnings import warn
+from typing import Set, Optional, Self
 from torch import nn
 from torch.utils.data import TensorDataset, DataLoader
 from torch.optim import lr_scheduler, Adam
 from torch.nn import functional as F
 from custom_score_functions import LogRatioLoss, NUGGET
 
-# CUSTOM MODELS NEED fit(), predict() AND reset_model() METHODS
+# CUSTOM MODELS NEED fit(), predict() AND reinit_model() METHODS
+
+# SUPERCLASS: RESETTABLE MODEL
+
+class resettable_model(nn.Module):
+
+    def __init__(self, state_dict_path: str):
+        """
+        Model can be reset to pre-train parameter values, reinitialised, or have architecture updated.
+
+        Args:
+            state_dict_path (str): absolute path where state_dict() is saved
+        """
+        super().__init__()
+        self.path          = state_dict_path
+
+    def forward(self, x):
+        raise NotImplementedError("`forward()` method should be implemented by subclasses.")
+
+    def save_initial_state(self):
+        """
+        Save initial parameters for later resets. 
+        """
+        torch.save(self.state_dict(), self.path)
+    
+    def update_architecture(self, new_architecture: nn.Sequential):
+        """
+        Update MLP architecture of self.
+
+        Args:
+            new_architecture: Sequential object of layers and activations
+        """
+        self.layers = new_architecture
+        self.save_initial_state()
+    
+    def reset_model_parameters(self):
+        """
+        Reset the model parameters to original state dict.
+        """
+        self.load_state_dict(torch.load(self.path))
+    
+    @staticmethod
+    def reinit_weights(m: nn.Linear):
+        """
+        Method to reinitialise weights of one layer in NN.
+        """
+        if isinstance(m, nn.Linear):
+            m.reset_parameters()
+
+    def reinit_model(self):
+        """
+        Reinitialise model parameters.
+        """
+        self.apply(self.reinit_weights)
+        print(f"First 10 weights of layer 1: {self.state_dict()['layers.0.weight'][0][0:10]}")
+
 
 # MULTI-LAYER PERCEPTRON 
 
-class MLP(nn.Module):
+class MLP(resettable_model):
     
     def __init__(self, n_predictors: int=12, num_epochs: int=5, lr: float=0.01\
                  , print_freq: int=10, with_scheduler=True, loss_fn=nn.MSELoss):
@@ -28,7 +85,7 @@ class MLP(nn.Module):
             loss_fn: loss function to train model
         """
 
-        super().__init__()
+        super().__init__(r"C:\Users\nial\Documents\GitHub\Master-Thesis\State dict\MLP_state_dict.pt")
 
         self.n_predictors   = n_predictors 
         self.num_epochs     = num_epochs
@@ -40,9 +97,21 @@ class MLP(nn.Module):
         self.fit_count      = 0
 
         self.layers         = self.build_model()
-        
-        self.path          = r"C:\Users\nial\Documents\GitHub\Master-Thesis\State dict\MLP_state_dict.pt"  
         self.save_initial_state()
+        
+    @staticmethod
+    def tensorize(array:np.ndarray):
+        """
+        Convert numpy nd array into a tensor.
+
+        Args:
+            array: nd array
+
+        Returns:
+            tensor: tensor with float32s
+        """
+        if isinstance(array, torch.Tensor): return array
+        else: return torch.tensor(array, dtype=torch.float32)
 
     def build_model(self):
         """
@@ -57,37 +126,6 @@ class MLP(nn.Module):
                         nn.Softplus()
                         )
         return layers
-    
-    def update_architecture(self, new_architecture: nn.Sequential):
-        """
-        Update MLP architecture of self.
-
-        Args:
-            new_architecture: Sequential object of layers and activations
-        """
-        self.layers = new_architecture
-        self.reset_model()
-        self.save_initial_state()
-    
-    def save_initial_state(self):
-        """
-        Save initial parameters for later resets. 
-        """
-        torch.save(self.state_dict(), self.path)
-
-    @staticmethod
-    def tensorize(array:np.ndarray):
-        """
-        Convert numpy nd array into a tensor.
-
-        Args:
-            array: nd array
-
-        Returns:
-            tensor: tensor with float32s
-        """
-        if isinstance(array, torch.Tensor): return array
-        else: return torch.tensor(array, dtype=torch.float32)
     
     def forward(self, x):
         output  = self.layers(x)
@@ -113,14 +151,16 @@ class MLP(nn.Module):
 
         self.train()
 
-        optimizer       = Adam(self.parameters(), lr=self.lr)
+        optimiser       = Adam(self.parameters(), lr=self.lr)
         loss_fn         = self.loss_fn
 
         if self.with_scheduler: 
             factor      = 0.5
             patience    = 3
             min_lr      = self.init_lr * (factor ** 4) 
-            scheduler   = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=factor, patience=patience, min_lr=min_lr)
+            scheduler   = lr_scheduler.ReduceLROnPlateau(optimiser, mode='min', factor=factor, patience=patience, min_lr=min_lr)
+        
+        self.fit_count += 1
 
         # train
         for epoch in range(self.num_epochs):
@@ -132,14 +172,14 @@ class MLP(nn.Module):
 
                 X_batch, y_batch    = batch
 
-                optimizer.zero_grad()
+                optimiser.zero_grad()
 
                 outputs             = self.forward(X_batch)
                 
                 loss_batch          = loss_fn(y_batch, outputs)
 
                 loss_batch.backward()
-                optimizer.step()
+                optimiser.step()
 
                 epoch_loss          += loss_batch.item()
                 n_iter              += 1
@@ -151,10 +191,8 @@ class MLP(nn.Module):
                 self.lr     = scheduler.get_last_lr()[0] # track lr
 
             # intermittent updates
-            if self.fit_count % self.print_freq == 0: 
-                print(f'Batch {self.fit_count}. Epoch [{epoch+1}/{self.num_epochs}], Training loss: {epoch_loss:.4f}, lr: {self.lr}')
-            
-        self.fit_count += 1
+            if self.fit_count % self.print_freq == 1: 
+                print(f'Model fit {self.fit_count}. Epoch [{epoch+1}/{self.num_epochs}], Training loss: {epoch_loss:.4f}, lr: {self.lr}')
 
     def predict(self, X: np.ndarray):
         """
@@ -167,29 +205,16 @@ class MLP(nn.Module):
         with torch.no_grad():
             return self.forward(X_tensor)
         
-    def reset_model_parameters(self):
+    def reinit_model(self):
         """
-        Reset the model parameters.
+        Reinitialise model parameters and attributes.
+        """
 
-        Args:
-            reset_model: whether to reinitialise parameters in the layers
-        """
-        self.load_state_dict(torch.load(self.path))
-        
-    def reset_model(self):
-        """
-        Reset the model parameters and attributes.
-        """
-        def reset_weights(m):
-            if isinstance(m, nn.Linear):
-                m.reset_parameters()
-
-        self.apply(reset_weights)
-        print("First 10 weights in layer 0: \n", self.state_dict()['layers.0.weight'][0][0:10])
+        super().reinit_model()
 
         self.fit_count  = 0
         self.lr         = self.init_lr
-        print(f"MLP model reset")
+        print(f"MLP model reinitialised")
 
     def __repr__(self):
         """
@@ -204,10 +229,10 @@ class MLP(nn.Module):
 class MLP_loss_learn(MLP):
 
     def __init__(self, n_predictors: int=12, num_epochs: int=5, lr: float=0.01\
-                 , print_freq: int=10, with_scheduler=True, loss_fn=nn.MSELoss, FC_dim: int=32):
+                 , print_freq: int=10, with_scheduler=True, loss_fn=nn.MSELoss):
 
         """
-        Perceptron model extended to acommodate jointly learning the loss.
+        Perceptron model with custom forward() method to acommodate jointly learning the loss.
 
         Source: https://arxiv.org/pdf/1905.03677
 
@@ -218,108 +243,30 @@ class MLP_loss_learn(MLP):
             print_freq: frequency (in MABS batches) at which to print updates
             with_scheduler: use learning rate scheduler?
             loss_fn: loss function to train model
-            FC_dim: output size of fully-connected layers (embeddings -> concat)
         """ 
         super().__init__(n_predictors, num_epochs, lr, print_freq, with_scheduler, loss_fn)
-
-        self.loss_net    = self.init_LossNet(FC_dim)
-
-    def init_LossNet(self, FC_dim: int) -> nn.Module:
-        """
-        Initialise LossNet.
-        
-        Args:
-            embedding_sizes: input sizes for layers
-            FC_dim: output size for layers
-        """
-        # infer embedding sizes from self.layers
-        embedding_sizes = []
-        
-        for layer in self.layers:
-            if isinstance(layer, nn.Linear):
-                embedding_size  = layer.out_features
-
-        loss_net        = LossNet(embedding_sizes[:-1], FC_dim)
-        return loss_net
 
     def forward(self, x):
 
         output          = x
         layer_outputs   = []
 
-        for i, layer in enumerate(self.layers):
+        for layer in self.layers:
             output = layer(output)
 
-            # store results from activation layers
-            if i % 2 == 1:
-                layer_outputs[i] = torch.flatten(output)
+            # store results from intermediate activation layers
+            if isinstance(layer, nn.ReLU):
+                layer_outputs.append(output)
 
-        return torch.flatten(output), layer_outputs[:-1]
+        return torch.flatten(output), layer_outputs
 
-    def fit(self, X: np.ndarray, y: np.ndarray):
-        """
-        Run training loop at time t.
+    def update_architecture(self, new_architecture: nn.Sequential):
+        warn("`forward()` method assumes that intermediate activation functions are all `ReLU()`")
+        super().update_architecture(new_architecture)
+    
+# LOSSNET PREDICTS THE LOSSES OF MLP
 
-        Args:
-            X: data
-            y: labels
-        """
-        # clean slate
-        self.reset_model_parameters()
-
-        # DataLoader
-        X_tensor        = self.tensorize(X)
-        y_tensor        = self.tensorize(y)
-
-        tensor_dataset  = TensorDataset(X_tensor, y_tensor)
-        train_loader    = DataLoader(dataset=tensor_dataset, batch_size=32, shuffle=True)
-
-        self.train()
-
-        optimizer       = Adam(self.parameters(), lr=self.lr)
-        loss_fn         = self.loss_fn
-
-        if self.with_scheduler: 
-            factor      = 0.5
-            patience    = 3
-            min_lr      = self.init_lr * (factor ** 4) 
-            scheduler   = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=factor, patience=patience, min_lr=min_lr)
-
-        # train
-        for epoch in range(self.num_epochs):
-        
-            epoch_loss  = 0
-            n_iter      = 0
-
-            for batch in train_loader:
-
-                X_batch, y_batch    = batch
-
-                optimizer.zero_grad()
-
-                outputs             = self.forward(X_batch)
-                
-                loss_batch          = loss_fn(y_batch, outputs)
-
-                loss_batch.backward()
-                optimizer.step()
-
-                epoch_loss          += loss_batch.item()
-                n_iter              += 1
-
-            epoch_loss /= n_iter
-
-            if self.with_scheduler: 
-                scheduler.step(epoch_loss)
-                self.lr     = scheduler.get_last_lr()[0] # track lr
-
-            # intermittent updates
-            if self.fit_count % self.print_freq == 0: 
-                print(f'Batch {self.fit_count}. Epoch [{epoch+1}/{self.num_epochs}], Training loss: {epoch_loss:.4f}, lr: {self.lr}')
-            
-        self.fit_count += 1
-
-class LossNet(nn.Module):
+class LossNet(resettable_model):
     
     def __init__(self, embedding_sizes: list = [64, 32], FC_dim: int = 32):
         """
@@ -330,16 +277,20 @@ class LossNet(nn.Module):
             FC_dim: number of nodes in fully-connected layers 
         """
 
-        super().__init__()
-
-        self.n_layers   = len(embedding_sizes)
-        self.FC_dim     = FC_dim
+        super().__init__(r"C:\Users\nial\Documents\GitHub\Master-Thesis\State dict\LossNet_state_dict.pt")
+        self.__dict__.update(vars())
 
         # FC layers (embeddings -> concatenation)
         self.FC_layers  = self._init_FC_layers(embedding_sizes, FC_dim)
 
         # final layer (concatenation -> loss prediction)
-        self.linear     = nn.Linear(self.n_layers * FC_dim, 1)
+        self.linear     = nn.Linear(self.n_layers_ * FC_dim, 1)
+
+        self.save_initial_state()
+
+    @property
+    def n_layers_(self):
+        return len(self.embedding_sizes)
     
     @staticmethod
     def _init_FC_layers(embedding_sizes: list, FC_dim: int):
@@ -357,7 +308,6 @@ class LossNet(nn.Module):
         
         return FC_layers
     
-
     def forward(self, layer_outputs: list):
         """
         Args:
@@ -368,10 +318,18 @@ class LossNet(nn.Module):
         for i, output in enumerate(layer_outputs):
             FC_output       = self.FC_layers[i](output)
             FC_output       = F.relu(FC_output)
-            FC_outputs[i]   = FC_output
+            FC_outputs.append(FC_output)
 
         loss_pred           = self.linear(torch.cat(FC_outputs, 1))
         return loss_pred
+
+    def reinit_model(self):
+        """
+        Reinitialise model parameters.
+        """
+        super().reinit_model()
+        print("LossNet reinitialised")
+
 
 
 
