@@ -20,7 +20,7 @@ class metadata_dist_selector:
         self.coreset_size_target    = coreset_size_target
         self.group_column           = group_column
 
-        self.coreset_indices    = list()
+        self.coreset_indices        = list()
 
     @property
     def coreset_(self) -> pd.DataFrame:
@@ -67,8 +67,7 @@ class metadata_dist_selector:
 
         return probabilities
 
-    @staticmethod
-    def select_next_K(non_coreset_: pd.DataFrame, K: int, probability_column: str) -> list:
+    def select_next_K(self, non_coreset_: pd.DataFrame, K: int, probability_column: str, update_indices: bool=True) -> list:
         """
         Select next K observations with probabilities given in `probability_column`.
 
@@ -76,19 +75,24 @@ class metadata_dist_selector:
             non_coreset_ (pd.DataFrame): complement of coreset in dataset
             K (int): number of observations to select
             probability_column (str): name of column determining probability of sampling observation.
+            update_indices (bool): whether to update `self.coreset_indices` inplace?
 
         Returns:
             next_K_indices (list): indices in `dataset` of next K observations to add to coreset.
         """
-        probabilities   = non_coreset_[probability_column]
+        probabilities               = non_coreset_[probability_column]
 
         # normalise probabilities
-        probabilities   = probabilities / probabilities.sum()
+        probabilities               = probabilities / probabilities.sum()
 
         # select next K
-        next_K_indices  = np.random.choice(non_coreset_.index, size=K, replace=False, p=probabilities)
+        next_K_indices              = np.random.choice(non_coreset_.index, size=K, replace=False, p=probabilities)
+        next_K_indices              = next_K_indices.tolist()
 
-        return next_K_indices.tolist()
+        if update_indices: 
+            self.coreset_indices    = self.coreset_indices + next_K_indices
+
+        return next_K_indices
 
     def select_coreset(self, K: int=10) -> list:
         """
@@ -107,8 +111,7 @@ class metadata_dist_selector:
         while self.coreset_size_ < self.coreset_size_target:
 
             # select next K obs. to add to coreset
-            next_K_indices          = self.select_next_K(self.non_coreset_, K, 'probabilities')
-            self.coreset_indices    = self.coreset_indices + next_K_indices
+            next_K_indices          = self.select_next_K(self.non_coreset_, K, 'probabilities', True)
         
         return self.coreset_indices
 

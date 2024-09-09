@@ -23,7 +23,8 @@ class resettable_model(nn.Module):
             state_dict_path (str): absolute path where state_dict() is saved
         """
         super().__init__()
-        self.path          = state_dict_path
+        self.path       = state_dict_path
+        self.verbose    = False      
 
     def forward(self, x):
         raise NotImplementedError("`forward()` method should be implemented by subclasses.")
@@ -33,6 +34,7 @@ class resettable_model(nn.Module):
         Save initial parameters for later resets. 
         """
         torch.save(self.state_dict(), self.path)
+        if self.verbose: print("Initial state saved!")
     
     def update_architecture(self, new_architecture: nn.Sequential):
         """
@@ -49,6 +51,7 @@ class resettable_model(nn.Module):
         Reset the model parameters to original state dict.
         """
         self.load_state_dict(torch.load(self.path))
+        if self.verbose: print("Model parameters reset!")
     
     @staticmethod
     def reinit_weights(m: nn.Linear):
@@ -63,7 +66,8 @@ class resettable_model(nn.Module):
         Reinitialise model parameters.
         """
         self.apply(self.reinit_weights)
-        print(f"First 10 weights of layer 1: {self.state_dict()['layers.0.weight'][0][0:10]}")
+        if self.verbose: print(f"First 10 weights of layer 1: {self.state_dict()['layers.0.weight'][0][0:10]}")
+        self.save_initial_state()
 
 
 # MULTI-LAYER PERCEPTRON 
@@ -71,7 +75,8 @@ class resettable_model(nn.Module):
 class MLP(resettable_model):
     
     def __init__(self, n_predictors: int=12, num_epochs: int=5, lr: float=0.01\
-                 , print_freq: int=10, with_scheduler=True, loss_fn=nn.MSELoss):
+                 , print_freq: int=10, with_scheduler=True, loss_fn=nn.MSELoss, 
+                 state_dict_path: str = None):
 
         """
         A simple three-layer perceptron model.
@@ -83,9 +88,12 @@ class MLP(resettable_model):
             print_freq: frequency (in MABS batches) at which to print updates
             with_scheduler: use learning rate scheduler?
             loss_fn: loss function to train model
+            state_dict_path (str): optional str to overwrite default `state_dict_path`
         """
-
-        super().__init__(r"C:\Users\nial\Documents\GitHub\Master-Thesis\State dict\MLP_state_dict.pt")
+        if not state_dict_path: 
+            state_dict_path = r"C:\Users\nial\Documents\GitHub\Master-Thesis\State dict\MLP_state_dict.pt"
+        
+        super().__init__(state_dict_path)
 
         self.n_predictors   = n_predictors 
         self.num_epochs     = num_epochs
@@ -244,7 +252,8 @@ class MLP_loss_learn(MLP):
             with_scheduler: use learning rate scheduler?
             loss_fn: loss function to train model
         """ 
-        super().__init__(n_predictors, num_epochs, lr, print_freq, with_scheduler, loss_fn)
+        state_dict_path = r"C:\Users\nial\Documents\GitHub\Master-Thesis\State dict\MLP_LL_state_dict.pt"
+        super().__init__(n_predictors, num_epochs, lr, print_freq, with_scheduler, loss_fn, state_dict_path)
 
     def forward(self, x):
 

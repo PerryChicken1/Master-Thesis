@@ -5,6 +5,7 @@ import numpy as np
 import pickle as pkl
 import torch
 import warnings
+import functools
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression, Ridge, Lasso, PoissonRegressor
 from sklearn.metrics import mean_absolute_percentage_error, r2_score, explained_variance_score, mean_squared_error # , root_mean_squared_error
@@ -74,10 +75,14 @@ class bandit:
         self.ttv_split()
         self.instantiate_priors()
 
-       # model and score function
+        # model and score function
         self.model              = model
         self.score              = mean_squared_error # log_ratio
         self.lower_is_better    = True
+
+        # identifier for `self.store_results()`
+        self.results_idx        = 0
+        self.results_dict       = dict()
 
     def clean_clusters(self):
         """
@@ -320,7 +325,7 @@ class bandit:
         self.val_scores.append(self.current_score)
 
         return reward
-    
+
     def compute_test_score(self):
         """
         Compute score on test set with current train indices.
@@ -332,16 +337,13 @@ class bandit:
         if self.predictor_count_ == 1: 
             X_train = X_train.reshape(-1, 1)
             X_test  = X_test.reshape(-1,1)
-   
+
+        # double epoch number for evaluation
+        self.model.num_epochs *= 2
         self.model.fit(X_train, y_train)
+        self.model.num_epochs //= 2
 
         y_test_hat  = self.model.predict(X_test)
-
-        # print(f"Shape of y test:{y_test.shape}")
-        # print(f"Shape of y predictions:{y_test_hat.shape}")
-
-        # negative or near-zero predictions are rounded up
-        # y_test_hat  = np.maximum(y_test_hat, 0.001)
 
         test_score  = self.score_prediction(y_test, y_test_hat)
         self.test_scores.append(test_score)
@@ -444,19 +446,17 @@ class bandit:
         # find T 'inliers'
         a                       = self.T / len(self.hidden_indices)
 
-        self.train_indices      = self.hidden_indices[:]
-
         # train / test split
-        X_train_tor, y_train_tor, X_test_tor, y_test_tor \
-                                = self.dataset_splitter(['train', 'test'])
+        X_hidden_tor, y_hidden_tor, X_test_tor, y_test_tor \
+                                = self.dataset_splitter(['hidden', 'test'])
         
         # fit torrent
         torrent                 = Torrent(a)
-        torrent.fit(X_train_tor, y_train_tor)
+        torrent.fit(X_hidden_tor, y_hidden_tor)
 
         # inliers
-        X_inliers_tor           = X_train_tor[torrent.inliers]
-        y_inliers_tor           = y_train_tor[torrent.inliers]
+        X_inliers_tor           = X_hidden_tor[torrent.inliers]
+        y_inliers_tor           = y_hidden_tor[torrent.inliers]
 
         # score model fit on inliers
         self.model.fit(X_inliers_tor, y_inliers_tor)
@@ -466,6 +466,10 @@ class bandit:
         # store score
         n_tests                 = len(self.test_times)
         self.test_scores        = [torrent_score] * n_tests
+
+        # store train_indices
+        train_indices           = [self.hidden_indices[i] for i in torrent.inliers_]
+        self.train_indices      = train_indices
 
         # store torrent to see iter_count & # inliers. TODO: will remove later
         self.torrent            = torrent
@@ -552,7 +556,7 @@ class bandit:
         # collect T observations
         while t < self.T:
 
-            next_K_indices              = mds.select_next_K(mds.non_coreset_, K, 'probabilities')
+            next_K_indices              = mds.select_next_K(mds.non_coreset_, K, 'probabilities', update_indices=True)
 
             for idx in next_K_indices:
                 self.hidden_indices.remove(idx)
@@ -649,7 +653,7 @@ class bandit:
         avg_scores: score at every test time (np.ndarray)
         """
         current_run = 1
-        test_scores = np.zeros(len(self.test_times))
+        avg_scores  = np.zeros(len(self.test_times))
 
         while current_run <= n_runs:
             
@@ -668,11 +672,15 @@ class bandit:
             elif which == 'LL': self.run_LL()
             elif which == 'mds': self.run_metadist_selector()
 
-            test_scores = np.sum((test_scores , self.test_scores), axis=0)
+            test_scores     = self.test_scores[:]
+            train_indices   = self.train_indices[:]
+            avg_scores      = np.sum((avg_scores, self.test_scores), axis=0)
+
+            self.store_results(which, current_run, test_scores, train_indices)
 
             current_run += 1
 
-        avg_scores  = test_scores / n_runs
+        avg_scores      /= n_runs
 
         return avg_scores
     
@@ -693,7 +701,7 @@ class bandit:
         for label, avg_scores in avg_scores_dict.items():
             self.plot_scores(times=self.test_times, scores=avg_scores, label=label, color=colors[label])
 
-        plt.ylim(ylim)
+        # plt.ylim(ylim)
         plt.legend()
         plt.suptitle(f"N runs = {n_runs}")
         plt.show()
@@ -709,12 +717,13 @@ class bandit:
         avg_scores_full             = self.eval_test_performance(n_runs, "full")
         avg_scores_rb               = self.eval_test_performance(n_runs, "rb")
         avg_scores_TORRENT          = self.eval_test_performance(n_runs, "TORRENT")
-        avg_scores_KCG              = self.eval_test_performance(n_runs, "KCG")    
-        avg_scores_MABS             = self.eval_test_performance(n_runs, "MABS")
+        avg_scores_KCG              = self.eval_test_performance(n_runs, "KCG")
         avg_scores_mds              = self.eval_test_performance(n_runs, 'mds')
 
         if isinstance(self.model, MLP):   
             avg_scores_LL           = self.eval_test_performance(n_runs, "LL")
+
+        avg_scores_MABS             = self.eval_test_performance(n_runs, "MABS")
 
         avg_scores_dict             =  {'Full model': avg_scores_full, 'Random baseline': avg_scores_rb\
                                    , 'TORRENT': avg_scores_TORRENT, 'KCG': avg_scores_KCG, 'MABS': avg_scores_MABS\
@@ -746,6 +755,26 @@ class bandit:
         
         self.plot_test_performance(avg_scores_dict, (y_min, y_max), n_runs)
     
+    def store_results(self, which: str, current_run:int, test_scores:list, train_indices: list):
+        """
+        Store results for one run of `eval_test_performance()`.
+
+        Args:
+            which (str): name of method run
+            current_run (int): index of current run
+            test_scores (list): scores of method at test times
+            train_indices (list): indices of observations in coreset
+        """
+        # save on storage
+        if which == 'full': 
+            train_indices = list()
+
+        self.results_dict[self.results_idx]     = {'which': which, 'current_run': current_run, 'test_times':self.test_times,
+                                                   'test_scores': test_scores, 'train_indices': train_indices}
+        
+        self.results_idx                        += 1
+
+
     def __repr__(self):
         """
         String representation of instantiated object.
@@ -763,6 +792,7 @@ class bandit:
         T={self.T!r}, 
         batch_size={self.batch_size!r}, 
         test_freq={self.test_freq!r}, 
+        test_times={self.test_times!r},
         model={self.model.__repr__()})
         """
 
@@ -820,38 +850,6 @@ class crafty_bandit(bandit):
         # make column categorical; add feature to dataset
         self.dataset["is_corrupted"]    = self.dataset["is_corrupted"].astype('category')
         self.features['is_corrupted']   = None
-
-# WHETHER TO SHUFFLE DATA OR ACCEPT TTV SPLIT (NOT USED)
-
-def bandit_shuffler(shuffle:bool = True):
-    """
-    Whether to shuffle data for sub-bandit or accept a TTV split.
-    Use case is ND_bandit.
-
-    INPUTS:
-    shuffle: True or False
-
-    OUTPUTS:
-    instance of class with shuffle implemented (or not)
-    """
-
-    def class_shuffler(cls):
-        """
-        INPUTS:
-        cls: class
-
-        OUTPUTS:
-        class with desired parent
-        """
-
-        parent = bandit if shuffle else lazy_bandit
-
-        class shuffle_child(parent):
-            pass
-            
-        return shuffle_child
-    
-    return class_shuffler
 
 # ND BANDIT PERMITS N-DIMENSIONAL CLASSES
 
@@ -1032,3 +1030,35 @@ class lazy_bandit(ND_bandit):
 
         # restore hidden indices
         self.hidden_indices     = self.init_hidden_indices[:]
+
+# WHETHER TO SHUFFLE DATA OR ACCEPT TTV SPLIT (NOT USED)
+
+def bandit_shuffler(shuffle:bool = True):
+    """
+    Whether to shuffle data for sub-bandit or accept a TTV split.
+    Use case is ND_bandit.
+
+    INPUTS:
+    shuffle: True or False
+
+    OUTPUTS:
+    instance of class with shuffle implemented (or not)
+    """
+
+    def class_shuffler(cls):
+        """
+        INPUTS:
+        cls: class
+
+        OUTPUTS:
+        class with desired parent
+        """
+
+        parent = bandit if shuffle else lazy_bandit
+
+        class shuffle_child(parent):
+            pass
+            
+        return shuffle_child
+    
+    return class_shuffler
