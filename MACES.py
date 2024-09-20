@@ -6,6 +6,7 @@ import pickle as pkl
 import torch
 import warnings
 import functools
+import time
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression, Ridge, Lasso, PoissonRegressor
 from sklearn.metrics import mean_absolute_percentage_error, r2_score, explained_variance_score, mean_squared_error # , root_mean_squared_error
@@ -24,23 +25,25 @@ from metadata_dists import metadata_dist_selector
 class bandit:
     """
     Bandit to select data for optimizing the model f.
-
-    INPUTS:
-    dataset: includes columns x and y
-    x: name(s) of independent variable(s)
-    y: column name of dependent variable
-    features: along which to cluster df, including n_bins if numeric
-    T: number of train points to sample before terminating (must be < frac_train * len(dataset))
-    batch_size: number of points to sample before computing reward
-    frac_train: fraction of dataset for training
-    frac_test: fraction of dataset for testing
-    frac_val: fraction of dataset for validation
-    test_freq: frequency (in batches) at which to evaluate the model fit on test set
-    model: object with fit() and predict() methods
     """
 
     def __init__(self, dataset: pd.DataFrame, x: str, y: str, features: dict, T: int=1000, batch_size: int=10\
                  , frac_train: float=0.5, frac_test: float=0.48, frac_val: float=0.02, test_freq: int=5, model=MLP()):
+        
+        """   
+        Args:
+            dataset: includes columns x and y
+            x: name(s) of independent variable(s)
+            y: column name of dependent variable
+            features: along which to cluster df, including n_bins if numeric
+            T: number of train points to sample before terminating (must be < frac_train * len(dataset))
+            batch_size: number of points to sample before computing reward
+            frac_train: fraction of dataset for training
+            frac_test: fraction of dataset for testing
+            frac_val: fraction of dataset for validation
+            test_freq: frequency (in batches) at which to evaluate the model fit on test set
+            model: object with fit() and predict() methods
+        """
 
         # store inputs
         self.dataset            = dataset
@@ -77,7 +80,7 @@ class bandit:
 
         # model and score function
         self.model              = model
-        self.score              = mean_squared_error # log_ratio
+        self.score              = mean_squared_error
         self.lower_is_better    = True
 
         # identifier for `self.store_results()`
@@ -98,12 +101,12 @@ class bandit:
         If the feature is categorical, then the categories determine the clusters.
         If the feature is numeric, then the feature is quantized into n_bins clusters.
 
-        INPUTS:
-        feature: name of feature in dataset along which to define clusters.
-        n_bins: number of bins, if feature is numeric.
+        Args:
+            feature: name of feature in dataset along which to define clusters.
+            n_bins: number of bins, if feature is numeric.
 
-        OUTPUTS:
-        Adds column to self.dataset indicating the cluster ID of an observation along the given metadata feature.
+        Returns:
+            Adds column to self.dataset indicating the cluster ID of an observation along the given metadata feature.
         """
         # get column
         try: cluster_column = self.dataset[f'{feature}']
@@ -136,8 +139,8 @@ class bandit:
         """
         Partitions the data into clusters along the specified metadata variables.
         
-        INPUTS:
-        features: dictionary of form {feature: n_bins}. The n_bins argument is ignored when feature is categorical.
+        Args:
+            features: dictionary of form {feature: n_bins}. The n_bins argument is ignored when feature is categorical.
         """
         for feature, n_bins in features.items():
             self.generate_cluster(feature, n_bins)
@@ -245,13 +248,13 @@ class bandit:
         """
         Sample batch_size datapoints and add them to the training dataset. Return cluster sampled.
 
-        INPUTS:
-        pi: reward probabilities
-        batch_size: number of datapoints to sample
+        Args:
+            pi: reward probabilities
+            batch_size: number of datapoints to sample
 
-        OUTPUTS:
-        j: cluster from which sample is taken
-        sample_size: size of sample taken
+        Returns:
+            j: cluster from which sample is taken
+            sample_size: size of sample taken
         """
         # find first non-empty cluster from which to sample
         pi_descending   = np.argsort(pi)[::-1]
@@ -288,9 +291,9 @@ class bandit:
         """
         Compute score for predictions.
 
-        INPUTS:
-        y: true values
-        y_hat: predicted values
+        Args:
+            y: true values
+            y_hat: predicted values
         """
         return self.score(y, y_hat)
 
@@ -339,9 +342,9 @@ class bandit:
             X_test  = X_test.reshape(-1,1)
 
         # double epoch number for evaluation
-        self.model.num_epochs *= 2
+        if isinstance(self.model, MLP): self.model.num_epochs *= 2
         self.model.fit(X_train, y_train)
-        self.model.num_epochs //= 2
+        if isinstance(self.model, MLP): self.model.num_epochs //= 2
 
         y_test_hat  = self.model.predict(X_test)
 
@@ -352,9 +355,9 @@ class bandit:
         """
         Update parameters for cluster sampling distributions based on reward.
 
-        INPUTS:
-        reward: reward from latest datapoint selection
-        j: index of cluster from which datapoints selected
+        Args:
+            reward: reward from latest datapoint selection
+            j: index of cluster from which datapoints selected
         """
         if reward == 1: self.alphas[j] += 1
         else:           self.betas[j] += 1
@@ -364,12 +367,12 @@ class bandit:
         Provide intermittent status reports about the agent during data selection.
         Only valuable when batch_size == 1. Not enabled by default.
          
-        INPUTS:
-        pi: expected cluster values
-        j: index of cluster last sampled
-        current_score: score relating to j
-        prev_score: previous score
-        r: latest reward
+        Args:
+            pi: expected cluster values
+            j: index of cluster last sampled
+            current_score: score relating to j
+            prev_score: previous score
+            r: latest reward
         """
         cluster_sampled = self.clusters[j]
         feature         = cluster_sampled[0].replace('cluster_ID_', '')
@@ -406,7 +409,7 @@ class bandit:
 
     def run_full_model(self):
         """
-        Fit model to full hidden data to benchmark MABS.
+        Fit model to full hidden data to benchmark MACES.
         """
         # hidden data becomes train data
         self.train_indices      = self.hidden_indices[:]
@@ -420,7 +423,7 @@ class bandit:
     
     def run_random_baseline(self):
         """
-        Run a random datapoint selector to benchmark MABS.
+        Run a random datapoint selector to benchmark MACES.
         """
         t = 0
 
@@ -441,7 +444,7 @@ class bandit:
 
     def run_TORRENT(self):
         """
-        Run TORRENT method to benchmark MABS.
+        Run TORRENT method to benchmark MACES.
         """
         # find T 'inliers'
         a                       = self.T / len(self.hidden_indices)
@@ -480,20 +483,18 @@ class bandit:
         """
         # instantiate k center agent
         hidden_data         = self.dataset.loc[self.hidden_indices]
-        k_center_agent      = k_center_greedy(hidden_data, self.x, self.T, euclidean)
+        k_center_agent      = k_center_greedy(hidden_data, self.x, self.T, euclidean)    
 
         # pick core-set
         while k_center_agent.coreset_size_ <  k_center_agent.budget:
             
             u               = k_center_agent.pick_center()
-
             self.train_indices.append(u)
             self.hidden_indices.remove(u)
 
             if k_center_agent.coreset_size_ % self.test_freq_t == 0:
-
                 self.compute_test_score()
-    
+
     def run_LL(self):
         """
         Run the loss learning method.
@@ -568,7 +569,7 @@ class bandit:
             if t % self.test_freq_t == 0:
                 self.compute_test_score()
 
-    def run_MABS(self):
+    def run_MACES(self):
         """
         Run the multi-armed bandit selection algorithm.
         """
@@ -599,23 +600,25 @@ class bandit:
         """
         After an algorithm is run, plot the scores over time.
 
-        INPUTS:
-        times: list of times
-        scores: list of scores
-        *args and **kwargs: parameters for plt.plot()
+        Args:
+            times: list of times
+            scores: list of scores
+            *args: parameters for plt.plot()
+            **kwargs: parameters for plt.plot()
         """
     
         plt.plot(times, scores, markersize=2, *args, **kwargs)
-        plt.xlabel("Time step t")
-        plt.ylabel(f"{self.score.__name__}")
-        plt.title(f"Model performance over time")
+        plt.xlabel("Coreset size")
+        plt.ylabel("Mean squared prediction error")
+        plt.title(f"Test performance of model trained using coreset")
 
     def plot_beta_dist(self, feature: str, *args, **kwargs):
         """
-        After run_MABS() is executed, plot the beta distributions for all categories of a given feature. 
+        After run_MACES() is executed, plot the beta distributions for all categories of a given feature. 
 
-        INPUTS:
-        *args and **kwargs: parameters for plt.plot()
+        Args:
+            *args: parameters for plt.plot()
+            **kwargs: parameters for plt.plot()
         """
         # filter to relevant features & categories
         feature_name    = f"cluster_ID_{feature}"
@@ -641,16 +644,16 @@ class bandit:
         plt.legend()
         plt.show()
 
-    def eval_test_performance(self, n_runs:int = 1, which: str = "MABS"):
+    def eval_test_performance(self, n_runs:int = 1, which: str = "MACES"):
         """
-        Compute average test scores over n_runs for MABS or one of the baselines.
+        Compute average test scores over n_runs for MACES or one of the baselines.
 
-        INPUTS:
-        n_runs: number of times to repeat the algorithms
-        which: whether to evaluate 'MABS', 'rb', 'TORRENT' or 'full'
+        Args:
+            n_runs: number of times to repeat the algorithms
+            which: whether to evaluate 'MACES', 'rb', 'TORRENT' or 'full'
         
-        OUTPUTS:
-        avg_scores: score at every test time (np.ndarray)
+        Returns:
+            avg_scores: score at every test time (np.ndarray)
         """
         current_run = 1
         avg_scores  = np.zeros(len(self.test_times))
@@ -659,12 +662,12 @@ class bandit:
             
             print(f"Benchmarking run {current_run} for model {which}")
 
-            torch.manual_seed(current_run)
-            np.random.seed(current_run)
-            random.seed(current_run)
+            torch.manual_seed(current_run + 100)
+            np.random.seed(current_run + 100)
+            random.seed(current_run + 100)
 
             self.reset()
-            if which == 'MABS': self.run_MABS()
+            if which == 'MACES': self.run_MACES()
             elif which == 'rb': self.run_random_baseline()
             elif which == 'full': self.run_full_model()
             elif which == 'TORRENT': self.run_TORRENT()
@@ -678,6 +681,11 @@ class bandit:
 
             self.store_results(which, current_run, test_scores, train_indices)
 
+            # if KCG, then store results early
+            if which == 'KCG':
+                with open(rf"C:\Users\nial\Documents\GitHub\Master-Thesis\Comprehensive Benchmarks\KCG_runs\run_{current_run}.pkl", "wb") as f:
+                    pkl.dump((current_run, test_scores, train_indices), f)
+
             current_run += 1
 
         avg_scores      /= n_runs
@@ -688,46 +696,51 @@ class bandit:
         """
         Plot outputs from eval_test_performance().
 
-        INPUTS:
-        avg_scores_dict: {label: avg_scores}
-        ylim: (y_min, y_max)
-        n_runs: number of runs of eval_test_performance()
+        Args:
+            avg_scores_dict: {label: avg_scores}
+            ylim: (y_min, y_max)
+            n_runs: number of runs of eval_test_performance()
         """
         plt.figure()
-        colors = {'Full model':'green', 'Random baseline':'blue', 'TORRENT':'red', 'KCG': 'fuchsia', 'MABS':'orange', 'LL':'olive', 'mds': 'aquamarine'}
+        colors = {'Full dataset':'aquamarine', 'Random selector':'cornflowerblue', 'TORRENT':'palegoldenrod', 'KCG': 'fuchsia', 'MACES':'indianred', 'Learning Loss':'lime', 'Metadata selector': 'aquamarine'}
         
         assert all(key in colors.keys() for key in avg_scores_dict.keys()), '`plot_test_performance` received unknown method'
 
         for label, avg_scores in avg_scores_dict.items():
-            self.plot_scores(times=self.test_times, scores=avg_scores, label=label, color=colors[label])
+            linestyle   = '--' if label in ['Full dataset', 'TORRENT'] else '-'
+            self.plot_scores(times=self.test_times, scores=avg_scores, label=label, color=colors[label], linestyle=linestyle)
 
         # plt.ylim(ylim)
         plt.legend()
         plt.suptitle(f"N runs = {n_runs}")
         plt.show()
     
-    def benchmark_MABS(self, n_runs:int = 1):
+    def benchmark_MACES(self, n_runs:int = 1):
         """
-        Plot average test scores over n_runs for random selector, full model and MABS.
+        Plot average test scores over n_runs for random selector, full model and MACES.
 
-        INPUTS:
-        n_runs: number of times to repeat the algorithms
+        Args:
+            n_runs: number of times to repeat the algorithms
         """
-        # random baseline, MABS with all features and full model
+        # random baseline, MACES with all features and full model
         avg_scores_full             = self.eval_test_performance(n_runs, "full")
         avg_scores_rb               = self.eval_test_performance(n_runs, "rb")
         avg_scores_TORRENT          = self.eval_test_performance(n_runs, "TORRENT")
-        avg_scores_KCG              = self.eval_test_performance(n_runs, "KCG")
+        # avg_scores_KCG              = self.eval_test_performance(n_runs, "KCG") TODO
         avg_scores_mds              = self.eval_test_performance(n_runs, 'mds')
 
         if isinstance(self.model, MLP):   
             avg_scores_LL           = self.eval_test_performance(n_runs, "LL")
 
-        avg_scores_MABS             = self.eval_test_performance(n_runs, "MABS")
+        avg_scores_MACES             = self.eval_test_performance(n_runs, "MACES")
 
-        avg_scores_dict             =  {'Full model': avg_scores_full, 'Random baseline': avg_scores_rb\
-                                   , 'TORRENT': avg_scores_TORRENT, 'KCG': avg_scores_KCG, 'MABS': avg_scores_MABS\
-                                    , 'LL': avg_scores_LL, 'mds': avg_scores_mds}
+        avg_scores_dict             =  {'Full dataset': avg_scores_full, 'Random selector': avg_scores_rb\
+                                   , 'TORRENT': avg_scores_TORRENT, 'MACES': avg_scores_MACES\
+                                    , 'Metadata selector': avg_scores_mds} # 'KCG': avg_scores_KCG, 
+        
+        if isinstance(self.model, MLP): 
+            avg_scores_dict['Learning Loss']\
+                                    = avg_scores_LL 
 
         terminal_scores_dict        = {key:value[-1] for key, value in avg_scores_dict.items()}
 
@@ -745,9 +758,9 @@ class bandit:
                 self.clean_clusters()
                 self.generate_cluster(feature, n_bins)
 
-                avg_scores_f    = self.eval_test_performance(n_runs, "MABS")
+                avg_scores_f    = self.eval_test_performance(n_runs, "MACES")
 
-                avg_scores_dict[f"MABS {feature}"] \
+                avg_scores_dict[f"MACES {feature}"] \
                                 =  avg_scores_f
 
         y_min                   = min([np.min(value) for _, value in avg_scores_dict.items()])
@@ -774,13 +787,12 @@ class bandit:
         
         self.results_idx                        += 1
 
-
     def __repr__(self):
         """
         String representation of instantiated object.
 
-        OUTPUT:
-        (partial) string of object call
+        Returns:
+            repr (str): string of object call
         """
         class_name = self.__class__.__name__
         return f"""
@@ -801,23 +813,24 @@ class bandit:
 class crafty_bandit(bandit):
     """
     Corrupts training data and attempts to successfully model regardless.
-
-    INPUTS:
-    dataset: includes columns x and y
-    x: name(s) of independent variable(s)
-    y: column name of dependent variable
-    features: along which to cluster df, including n_bins if numeric
-    T: number of train points to sample before terminating (must be < frac_train * len(dataset))
-    batch_size: number of points to sample before computing reward
-    frac_train: fraction of dataset for training
-    frac_test: fraction of dataset for testing
-    frac_val: fraction of dataset for validation
-    test_freq: frequency (in batches) at which to evaluate the model fit on test set
-    p_corrupt: proportion of training observations to corrupt
     """
     def __init__(self, dataset: pd.DataFrame, x: str, y: str, features: dict, T: int=1000, batch_size: float=10\
                  , frac_train: float=0.5, frac_test: float=0.48, frac_val: float=0.02, test_freq: int=5, p_corrupt: float=0.1
                  , model=MLP()):
+        """  
+        Args:
+            dataset: includes columns x and y
+            x: name(s) of independent variable(s)
+            y: column name of dependent variable
+            features: along which to cluster df, including n_bins if numeric
+            T: number of train points to sample before terminating (must be < frac_train * len(dataset))
+            batch_size: number of points to sample before computing reward
+            frac_train: fraction of dataset for training
+            frac_test: fraction of dataset for testing
+            frac_val: fraction of dataset for validation
+            test_freq: frequency (in batches) at which to evaluate the model fit on test set
+            p_corrupt: proportion of training observations to corrupt
+        """
 
         super().__init__(dataset=dataset, x=x, y=y, features=features, T=T, batch_size=batch_size\
                  , frac_train=frac_train, frac_test=frac_test, frac_val=frac_val, test_freq=test_freq, model=model)
@@ -832,8 +845,8 @@ class crafty_bandit(bandit):
         """
         Corrupt training datapoints Y and record.
 
-        INPUTS:
-        p_corrupt: proportion of training observations to corrupt
+        Args:
+            p_corrupt: proportion of training observations to corrupt
         """
         # corrupt training points
         self.dataset["is_corrupted"]    = 0
@@ -857,23 +870,25 @@ class ND_bandit(bandit):
     """
     Bandit permitting n-dimensional classes (i.e., comprising n features).
     All features are crossed to generate clusters.
-
-    INPUTS:
-    dataset: includes columns x and y
-    x: name(s) of independent variable(s)
-    y: column name of dependent variable
-    features: along which to cluster df, including n_bins if numeric
-    T: number of train points to sample before terminating (must be < frac_train * len(dataset))
-    batch_size: number of points to sample before computing reward
-    frac_train: fraction of dataset for training
-    frac_test: fraction of dataset for testing
-    frac_val: fraction of dataset for validation
-    test_freq: frequency (in batches) at which to evaluate the model fit on test set
-    model: object with fit() and predict() methods
     """
+
     def __init__(self, dataset: pd.DataFrame, x: str, y: str, features: dict\
                  , T: int=1000, batch_size: float=10, frac_train: float=0.5, frac_test: float=0.48\
                  , frac_val: float=0.02, test_freq: int=5, model = MLP()):
+        """
+        Args:
+            dataset: includes columns x and y
+            x: name(s) of independent variable(s)
+            y: column name of dependent variable
+            features: along which to cluster df, including n_bins if numeric
+            T: number of train points to sample before terminating (must be < frac_train * len(dataset))
+            batch_size: number of points to sample before computing reward
+            frac_train: fraction of dataset for training
+            frac_test: fraction of dataset for testing
+            frac_val: fraction of dataset for validation
+            test_freq: frequency (in batches) at which to evaluate the model fit on test set
+            model: object with fit() and predict() methods
+        """
   
         # instantiate for mapping clusters to features
         self.cluster_dict       = dict()
@@ -885,11 +900,11 @@ class ND_bandit(bandit):
         """
         Generate a cluster for every entry in the cartesian product of binned features.
 
-        INPUTS:
-        features: {feature: n_bins} dictionary
+        Args:
+            features: {feature: n_bins} dictionary
 
-        OUTPUTS:
-        Column 'ND_cluster' added to self.dataset indicating cluster membership.
+        Returns:
+            Column 'ND_cluster' added to self.dataset indicating cluster membership.
         """
         # generate unit clusters
         super().generate_clusters(features)
@@ -925,12 +940,12 @@ class ND_bandit(bandit):
         Only valuable when batch_size == 1. Not enabled by default.
         plot_beta_dist() call suppressed: too much customizability.
          
-        INPUTS:
-        pi: expected cluster values
-        j: index of cluster last sampled
-        current_score: score relating to j
-        prev_score: previous score
-        r: latest reward
+        Args:
+            pi: expected cluster values
+            j: index of cluster last sampled
+            current_score: score relating to j
+            prev_score: previous score
+            r: latest reward
         """
         cluster_sampled = self.cluster_dict[j]
 
@@ -943,12 +958,13 @@ class ND_bandit(bandit):
         
     def plot_beta_dist(self, feature: str, fixed_val,*args, **kwargs):
         """
-        After run_MABS() is executed, plot the beta distributions at a fixed value of a feature.
+        After run_MACES() is executed, plot the beta distributions at a fixed value of a feature.
 
-        INPUTS:
-        feature: to fix
-        fixed_val: fixed value of feature
-        *args and **kwargs: parameters for plt.plot()
+        Args:
+            feature: to fix
+            fixed_val: fixed value of feature
+            *args: parameters for plt.plot()
+            **kwargs: parameters for plt.plot()
         """
         # filter where feature == fixed_val
         indices         = [idx for idx, feat_dict in self.cluster_dict.items() if feat_dict["cluster_ID_" + feature] == fixed_val]
@@ -983,24 +999,26 @@ class lazy_bandit(ND_bandit):
     """
     Like bandit, but too lazy to shuffle the data. 
     User specifies hidden (train), validation and test indices.
-
-    INPUTS:
-    dataset: includes columns x and y
-    x: name(s) of independent variable(s)
-    y: column name of dependent variable
-    features: along which to cluster df, including n_bins if numeric
-    T: number of train points to sample before terminating (must be < frac_train * len(dataset))
-    batch_size: number of points to sample before computing reward
-    hidden_indices: indices of datapoints eligible for training
-    test_indices: indices of datapoints for testing
-    val_indices: indices of datapoints for validation
-    test_freq: frequency (in batches) at which to evaluate the model fit on test set
-    model: object with fit() and predict() methods
     """
     
     def __init__(self, dataset: pd.DataFrame, x: str, y: str, features: dict\
                  , hidden_indices: list, test_indices: list, val_indices: list\
                  , T: int=1000, batch_size: float=10, test_freq: int=5, model= MLP()):
+        
+        """
+        Args:
+            dataset: includes columns x and y
+            x: name(s) of independent variable(s)
+            y: column name of dependent variable
+            features: along which to cluster df, including n_bins if numeric
+            T: number of train points to sample before terminating (must be < frac_train * len(dataset))
+            batch_size: number of points to sample before computing reward
+            hidden_indices: indices of datapoints eligible for training
+            test_indices: indices of datapoints for testing
+            val_indices: indices of datapoints for validation
+            test_freq: frequency (in batches) at which to evaluate the model fit on test set
+            model: object with fit() and predict() methods
+        """
 
         super().__init__(dataset, x, y, features, T, batch_size, 0, 0, 0, test_freq, model)
         
@@ -1038,20 +1056,20 @@ def bandit_shuffler(shuffle:bool = True):
     Whether to shuffle data for sub-bandit or accept a TTV split.
     Use case is ND_bandit.
 
-    INPUTS:
-    shuffle: True or False
+    Args:
+        shuffle: True or False
 
-    OUTPUTS:
-    instance of class with shuffle implemented (or not)
+    Returns:
+        instance of class with shuffle implemented (or not)
     """
 
     def class_shuffler(cls):
         """
-        INPUTS:
-        cls: class
+        Args:
+            cls: class
 
-        OUTPUTS:
-        class with desired parent
+        Returns:
+            class with desired parent
         """
 
         parent = bandit if shuffle else lazy_bandit

@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import os
 import itertools
-from MABS import lazy_bandit
+from MACES import lazy_bandit
 from random import shuffle
 
 def ensure_dir(file_path):
@@ -19,7 +19,7 @@ def ensure_dir(file_path):
 
 def benchmark_bandit(bandit, n_runs: int, description: str=None):
     """
-    Benchmark MABS on bandit and store results.
+    Benchmark MACES on bandit and store results.
 
     INPUTS:
     bandit: instance of bandit class or a bandit subclass
@@ -57,7 +57,7 @@ def benchmark_bandit(bandit, n_runs: int, description: str=None):
         plt.show = original_show
 
     with save_plot_as_png(filename):
-        bandit.benchmark_MABS(n_runs)
+        bandit.benchmark_MACES(n_runs)
     
     # prompt user for description
     if not description: 
@@ -84,7 +84,7 @@ def benchmark_subset_n(bandit, n: int=4000, n_runs: int=1):
     INPUTS:
     bandit: instance of bandit() class, or one of the subclasses
     n: number of hidden indices
-    n_runs: argument to benchmark_MABS()
+    n_runs: argument to benchmark_MACES()
     """
 
     hidden_indices              = bandit.hidden_indices
@@ -93,7 +93,7 @@ def benchmark_subset_n(bandit, n: int=4000, n_runs: int=1):
     bandit.init_hidden_indices  = hidden_indices_n
     bandit.hidden_indices       = hidden_indices_n
 
-    bandit.benchmark_MABS(n_runs=n_runs)
+    bandit.benchmark_MACES(n_runs=n_runs)
 
 def load_specs(DD: str, MM: str, YYYY:str,  h: str, m: str, s: str):
     """
@@ -117,13 +117,13 @@ def load_specs(DD: str, MM: str, YYYY:str,  h: str, m: str, s: str):
 
 def lazy_bandit_feature_search(features: dict, model, tuple_size: int=3, n_runs: int=10, **kwargs):
     """
-    Benchmark MABS method for several feature combinations using ND bandit.
+    Benchmark MACES method for several feature combinations using ND bandit.
 
     INPUTS:
     features: superset of features to choose from
     model: model with fit() and predict() methods to assign to bandit; inc. hyperparameters specified 
     tuple_size: number of features to pass to the agent. <= len(features)
-    n_runs: argument to benchmark_MABS()
+    n_runs: argument to benchmark_MACES()
     kwargs: other arguments to bandit()
     """
     # all combinations of size `tuple_size`
@@ -131,7 +131,7 @@ def lazy_bandit_feature_search(features: dict, model, tuple_size: int=3, n_runs:
     feat_combinations   = list(itertools.combinations(feat_names, tuple_size))
     shuffle(feat_combinations)
 
-    # benchmark MABS for each combination
+    # benchmark MACES for each combination
     for combination in feat_combinations:
         
         # select features
@@ -145,7 +145,7 @@ def lazy_bandit_feature_search(features: dict, model, tuple_size: int=3, n_runs:
 
 def comprehensive_benchmark(lazy_bandit_: lazy_bandit, description: str, filename: str, n_runs: int=10):
     """
-    Record comprehensive details about MABS and all benchmarked methods for specified parameters.
+    Record comprehensive details about MACES and all benchmarked methods for specified parameters.
 
     Args:
         lazy_bandit_ (lazy_bandit): `lazy_bandit` to benchmark
@@ -179,7 +179,7 @@ def comprehensive_benchmark(lazy_bandit_: lazy_bandit, description: str, filenam
         plt.show = original_show
 
     with save_plot_as_png(plotname):
-        lazy_bandit_.benchmark_MABS(n_runs)
+        lazy_bandit_.benchmark_MACES(n_runs)
 
     results_dict        = lazy_bandit_.results_dict
     lazy_bandit_repr    = lazy_bandit_.__repr__()
