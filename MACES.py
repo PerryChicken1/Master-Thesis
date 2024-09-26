@@ -73,9 +73,9 @@ class bandit:
         self.test_times         = range(self.test_freq_t, T+1, self.test_freq_t)
         
         # clusters, TTV split, priors
+        self.ttv_split()
         self.clean_clusters()
         self.generate_clusters(features)
-        self.ttv_split()
         self.instantiate_priors()
 
         # model and score function
@@ -114,10 +114,16 @@ class bandit:
 
         # numeric
         if ptypes.is_numeric_dtype(cluster_column):
+            
+            # use only hidden observations to determine clusters
+            cluster_col_hidden  = cluster_column[self.dataset.index.isin(self.hidden_indices)]
+            _, bins_h           = pd.qcut(cluster_col_hidden, q=n_bins, labels=False, duplicates='drop', retbins=True)
+            bins_h              = pd.unique(bins_h)   
+            cluster_ids         = pd.cut(cluster_column, bins=bins_h, labels=False, include_lowest=True)
 
             # continuous
-            cluster_ids, bins   = pd.qcut(cluster_column, q=n_bins, labels=False, duplicates='drop', retbins=True)
-            cluster_ids         = cluster_ids.apply(lambda c_id: bins[c_id])
+            # cluster_ids, bins   = pd.qcut(cluster_column, q=n_bins, labels=False, duplicates='drop', retbins=True)
+            # cluster_ids         = cluster_ids.apply(lambda c_id: bins[c_id])
 
         # categorical
         elif ptypes.is_categorical_dtype(cluster_column):
@@ -483,7 +489,11 @@ class bandit:
         """
         # instantiate k center agent
         hidden_data         = self.dataset.loc[self.hidden_indices]
-        k_center_agent      = k_center_greedy(hidden_data, self.x, self.T, euclidean)    
+
+        # apply KCG on random subset of data (faster)
+        hidden_subset       = hidden_data.sample(frac=0.1, ignore_index=False)
+
+        k_center_agent      = k_center_greedy(hidden_subset, self.x, self.T, euclidean)    
 
         # pick core-set
         while k_center_agent.coreset_size_ <  k_center_agent.budget:
@@ -571,7 +581,7 @@ class bandit:
 
     def run_MACES(self):
         """
-        Run the multi-armed bandit selection algorithm.
+        Run the multi-armed coreset selection algorithm.
         """
         t   = 0
 
@@ -644,16 +654,16 @@ class bandit:
         plt.legend()
         plt.show()
 
-    def eval_test_performance(self, n_runs:int = 1, which: str = "MACES"):
+    def eval_test_performance(self, n_runs:int = 1, which: str = "MACES") -> np.ndarray:
         """
         Compute average test scores over n_runs for MACES or one of the baselines.
 
         Args:
-            n_runs: number of times to repeat the algorithms
-            which: whether to evaluate 'MACES', 'rb', 'TORRENT' or 'full'
+            n_runs (int): number of times to repeat the algorithms
+            which (str): whether to evaluate 'MACES', 'rb', 'TORRENT' or 'full'
         
         Returns:
-            avg_scores: score at every test time (np.ndarray)
+            avg_scores (np.ndarray): score at every test time
         """
         current_run = 1
         avg_scores  = np.zeros(len(self.test_times))
@@ -702,13 +712,13 @@ class bandit:
             n_runs: number of runs of eval_test_performance()
         """
         plt.figure()
-        colors = {'Full dataset':'aquamarine', 'Random selector':'cornflowerblue', 'TORRENT':'palegoldenrod', 'KCG': 'fuchsia', 'MACES':'indianred', 'Learning Loss':'lime', 'Metadata selector': 'aquamarine'}
+        colors = {'Full dataset':'black', 'Random selector':'cornflowerblue', 'TORRENT':'palegoldenrod', 'KCG': 'fuchsia', 'MACES':'indianred', 'Learning Loss':'lime', 'Metadata selector': 'darkorange'}
         
         assert all(key in colors.keys() for key in avg_scores_dict.keys()), '`plot_test_performance` received unknown method'
 
         for label, avg_scores in avg_scores_dict.items():
             linestyle   = '--' if label in ['Full dataset', 'TORRENT'] else '-'
-            self.plot_scores(times=self.test_times, scores=avg_scores, label=label, color=colors[label], linestyle=linestyle)
+            self.plot_scores(times=self.test_times, scores=avg_scores, label=label, color=colors[label], linestyle=linestyle, linewidth=2.5)
 
         # plt.ylim(ylim)
         plt.legend()
@@ -780,10 +790,12 @@ class bandit:
         """
         # save on storage
         if which == 'full': 
-            train_indices = list()
+            train_indices   = list()
 
-        self.results_dict[self.results_idx]     = {'which': which, 'current_run': current_run, 'test_times':self.test_times,
-                                                   'test_scores': test_scores, 'train_indices': train_indices}
+        results_dict_i      = {'which': which, 'current_run': current_run, 'test_times':self.test_times,
+                              'test_scores': test_scores, 'train_indices': train_indices, 'sampled_clusters':self.sampled_C}
+
+        self.results_dict[self.results_idx]     = results_dict_i
         
         self.results_idx                        += 1
 
@@ -933,6 +945,7 @@ class ND_bandit(bandit):
         # retain ND clusters
         self.clusters                           = [('ND_cluster', value) for value in unique_combinations['ND_cluster'].unique()]
         self.dataset                            = dataset_merged
+        self.cluster_sizes                      = self.dataset[self.dataset.index.isin(self.hidden_indices)].value_counts()
 
     def under_the_hood(self, pi:np.ndarray, j:int, current_score: float, prev_score: float, r:float):
         """
@@ -992,6 +1005,28 @@ class ND_bandit(bandit):
         plt.suptitle(f"Feature {feature} = {fixed_val}")
         plt.legend(fontsize='small')
         plt.show()
+
+    def store_results(self, which: str, current_run:int, test_scores:list, train_indices: list):
+        """
+        Store results for one run of `eval_test_performance()`.
+
+        Args:
+            which (str): name of method run
+            current_run (int): index of current run
+            test_scores (list): scores of method at test times
+            train_indices (list): indices of observations in coreset
+        """
+        # save on storage
+        if which == 'full': 
+            train_indices   = list()
+
+        results_dict_i      = {'which': which, 'current_run': current_run, 'test_times':self.test_times,
+                              'test_scores': test_scores, 'train_indices': train_indices, 'sampled_clusters':self.sampled_C
+                              , 'cluster_dict': self.cluster_dict, 'cluster_sizes': self.cluster_sizes}
+
+        self.results_dict[self.results_idx]     = results_dict_i
+        
+        self.results_idx                        += 1
 
 # LAZY BANDIT DOES NOT PERFORM TTV SPLIT
 

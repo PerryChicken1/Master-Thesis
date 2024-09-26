@@ -6,8 +6,10 @@ import numpy as np
 import pandas as pd
 import os
 import itertools
+import warnings
 from MACES import lazy_bandit
 from random import shuffle
+from collections import Counter
 
 def ensure_dir(file_path):
     """
@@ -143,7 +145,7 @@ def lazy_bandit_feature_search(features: dict, model, tuple_size: int=3, n_runs:
         description     = ", ".join(features_c.keys())
         benchmark_bandit(bandit=bandit, n_runs=n_runs, description=description)
 
-def comprehensive_benchmark(lazy_bandit_: lazy_bandit, description: str, filename: str, n_runs: int=10):
+def comprehensive_benchmark(lazy_bandit_: lazy_bandit, description: str, filename: str, n_runs: int=10, with_KCG: bool=True):
     """
     Record comprehensive details about MACES and all benchmarked methods for specified parameters.
 
@@ -152,6 +154,7 @@ def comprehensive_benchmark(lazy_bandit_: lazy_bandit, description: str, filenam
         description (str): characterisation of benchmarking run
         filename (str): name of file
         n_runs (int): number of independent runs
+        with_KCG (bool): add previous KCG results?
     """
     folder              = rf"C:\Users\nial\Documents\GitHub\Master-Thesis\Comprehensive Benchmarks\{filename}"
     plotname            = folder + rf"\{filename}_benchmark_plot.png"
@@ -182,11 +185,46 @@ def comprehensive_benchmark(lazy_bandit_: lazy_bandit, description: str, filenam
         lazy_bandit_.benchmark_MACES(n_runs)
 
     results_dict        = lazy_bandit_.results_dict
+    if with_KCG: 
+        results_dict    = add_KCG_to_results(lazy_bandit_, results_dict, n_runs)
     lazy_bandit_repr    = lazy_bandit_.__repr__()
 
     with open(folder + rf"\{filename}.pkl", "wb") as specs_file:
         pkl.dump((description, lazy_bandit_repr, results_dict), specs_file)
     
+def add_KCG_to_results(lazy_bandit_: lazy_bandit, results_dict: dict, n_runs:int) -> dict:
+    """
+    Add previous results from KCG runs to a `results_dict` in `comprehensive_benchmark`.
+    KCG is model-invariant, so we do not need to re-run the method more than once.
+
+    Args:
+        lazy_bandit_ (lazy_bandit): agent used for benchmarking
+        results_dict (dict): output from `comprehensive_benchmark`
+        n_runs (int): number of independent coreset selection runs
+    
+    Returns:
+        results_dict (dict): with KCG run results added
+    """
+    # NOTE: current implemenation assumes the same parameters are used for KCG and other benchmarks.
+    if not all((lazy_bandit_.batch_size == 10, lazy_bandit_.test_freq == 10, lazy_bandit_.T == 4000, n_runs==10)):
+        warnings.warn("Different specifications for KCG runs. Results unlikely to be compatible!")
+
+    last_key    = max(results_dict.keys())
+
+    for i in range(10):
+
+        with open(rf'C:\Users\nial\Documents\GitHub\Master-Thesis\Comprehensive Benchmarks\KCG_runs\run_{i+1}.pkl', 'rb') as f:
+            KCG_run_i = pkl.load(f)
+        
+        results_dict[i + last_key + 1] = {'which': 'KCG', 
+                                          'current_run': KCG_run_i[0], 
+                                          'test_times': range(100, 4001, 100), 
+                                          'test_scores':KCG_run_i[1], 
+                                          'train_indices':KCG_run_i[2]}
+    
+    return results_dict
+
+
 def tabulate_bmk_outputs(filename:str, average: bool=False, dump: bool=False) -> pd.DataFrame:
     """
     Create a table from `.pkl` output of `comprehensive_benchmark()`.
@@ -233,4 +271,90 @@ def tabulate_bmk_outputs(filename:str, average: bool=False, dump: bool=False) ->
             pkl.dump(bmk_table, f)
 
     return bmk_table
+
+def plot_test_times(bmk_table: pd.DataFrame, title: str, filename: str):
+    """
+    Plots the average score with uncertainty regions for each algorithm. Saves to filename.
     
+    Args:
+        bmk_table (pd.DataFrame): tabular output from `tabulate_bmk_outputs`
+        title (str): title for plot
+        filename (str): name of file to save plot
+    """
+    folder          = rf"C:\Users\nial\Documents\GitHub\Master-Thesis\Comprehensive Benchmarks\{filename}"
+    time_points     = [int(col.split('_')[-1]) for col in bmk_table.columns if col.startswith('test_time_')]
+    
+    # group table by algorithm
+    groups          = bmk_table.groupby('which')
+    
+    plt.figure(figsize=(10, 6))
+    plt.xlim(min(time_points), max(time_points))
+    
+    algorithm_names =  {'full': 'Full dataset', 'rb': 'Random selector', 'TORRENT': 'TORRENT Algorithm', 'MACES': 'MACES Algorithm'\
+                        , 'mds': 'Metadata Selector', 'KCG': 'KCG Algorithm', 'LL': 'Loss Learner Algorithm'}
+    colours         = {'full': 'black', 'rb': 'coral', 'TORRENT': 'violet', 'MACES': 'lightseagreen'\
+                       , 'mds': 'mediumspringgreen', 'KCG': 'gold', 'LL': 'lightpink'}
+        
+    # plot lines iteratively
+    for which, group in groups:
+        algorithm_name  = algorithm_names[which]
+        test_times      = group[[col for col in bmk_table.columns if col.startswith('test_time_')]].values
+        
+        # mean line
+        mean_scores = test_times.mean(axis=0)
+        
+        # 'uncertainty' region => 2nd highest and 2nd lowest scores 
+        sorted_scores   = np.sort(test_times, axis=0)
+        second_lowest   = sorted_scores[1, :]
+        second_highest  = sorted_scores[-2, :]
+        
+        # dotted line for methods with fixed training data size
+        linestyle       = '--' if algorithm_name in ['Full dataset', 'TORRENT Algorithm'] else '-'
+        plt.plot(time_points, mean_scores, label=algorithm_name, linewidth=2.5, linestyle=linestyle, color=colours[which])
+        
+        # uncertainty shaded region
+        plt.fill_between(time_points, second_lowest, second_highest, alpha=0.3, color=colours[which])
+    
+    plt.xlabel('Coreset size')
+    plt.ylabel('Mean squared prediction error')
+    plt.suptitle('Prediction error on holdout test set')
+    plt.title(title)
+    plt.legend(title='Coreset selection algorithms')
+    plt.grid(True)
+    plt.savefig(folder + rf'\{filename}.png')
+
+def analyse_sampled_clusters(df_global: pd.DataFrame, filename: str) -> pd.DataFrame:
+    """
+    Analyses the proportion of observations drawn from the K clusters in a MACES benchmarking.
+
+    Args:
+        df_global (pd.DataFrame): dataframe containing data and metadata
+        filename (str): filename where results stored (i.e., string passed to `comprehensive_benchmark()`)
+
+    Returns:
+        cluster_analysis (pd.DataFrame): overview of number of observations drawn from each cluster
+    """
+    raise NotImplementedError('.')
+    
+    with open(rf"C:\Users\nial\Documents\GitHub\Master-Thesis\Comprehensive Benchmarks\{filename}\{filename}.pkl", 'rb') as f:
+        bmk_results = pkl.load(f)
+
+    MACES_results   = [result_dict for result_dict in bmk_results[2].values() if result_dict['which'] == 'MACES']
+    
+    all_indices     = [index for d in MACES_results for index in d['train_indices']]
+    
+
+
+    # Map the indices to their clusters using df_global
+    cluster_lookup  = df_global.index[cluster_col].to_dict()
+    
+    # Get the corresponding clusters for each coreset index
+    clusters = [cluster_lookup.get(idx) for idx in all_indices if idx in cluster_lookup]
+    
+    # Count occurrences of each cluster
+    cluster_counts = Counter(clusters)
+    
+    # Convert the counts to a DataFrame
+    df_counts = pd.DataFrame(list(cluster_counts.items()), columns=[cluster_col, 'count'])
+    
+    return df_counts.sort_values(by='count', ascending=False).reset_index(drop=True)

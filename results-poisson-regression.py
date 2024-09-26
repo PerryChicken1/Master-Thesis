@@ -3,43 +3,52 @@ import pandas as pd
 from sklearn.linear_model import PoissonRegressor
 from sklearn.metrics import mean_squared_error
 from MACES import lazy_bandit
-from benchmarking_utils import comprehensive_benchmark
+from benchmarking_utils import comprehensive_benchmark, tabulate_bmk_outputs, plot_test_times
 from custom_ttv_split import load_data, get_ttv_indices
-from torch import nn
 
-####################################################################
-# PARAMETERS                                                       #
-####################################################################
+if __name__ == '__main__':
 
-df_global               = load_data()
+    ####################################################################
+    # PARAMETERS                                                       #
+    ####################################################################
 
-hidden_indices, test_indices, val_indices\
-                        =  get_ttv_indices(df_global, 'new_colour')
+    df_global               = load_data()
 
-# features
-x                       = ["B01","B02","B03","B04","B05","B06","B07","B08","B8A","B09","B11","B12"]
-y                       = 'agbd'
-features                = {'region_cla':None, 'elev_lowes':3, 'selected_a': None}
+    hidden_indices, test_indices, val_indices\
+                            =  get_ttv_indices(df_global, 'new_colour')
 
-# MABS parameters
-T                       = 4000
-batch_size              = 10
-test_freq               = 10
+    # features
+    x                       = ["B01","B02","B03","B04","B05","B06","B07","B08","B8A","B09","B11","B12"]
+    y                       = 'agbd'
+    features                = {'region_cla':None, 'elev_lowes':3, 'selected_a': None}
 
-# model
-model                   = PoissonRegressor()
+    # MABS parameters
+    T                       = 4000
+    batch_size              = 10
+    test_freq               = 10
 
-# agent
-bandit_global           = lazy_bandit(dataset=df_global, x=x, y=y, features=features, hidden_indices=hidden_indices
+    # model
+    model                   = PoissonRegressor()
+
+    # agent
+    bandit_global           = lazy_bandit(dataset=df_global, x=x, y=y, features=features, hidden_indices=hidden_indices
                                       , test_indices=test_indices, val_indices=val_indices, T=T, batch_size=batch_size
                                       , test_freq=test_freq, model=model)
+    
+    # filename to save results
+    filename                = 'poisson-regressor-bmk-second' 
 
-####################################################################
-# RUN                                                              #
-####################################################################
+    ####################################################################
+    # RUN, SAVE, AND PLOT RESULTS                                      #
+    ####################################################################
 
-comprehensive_benchmark(lazy_bandit_=bandit_global, 
+    comprehensive_benchmark(lazy_bandit_=bandit_global, 
                         description='Poisson Regressor Comprehensive Bmk',
-                        filename='poisson-regressor-bmk',
-                        n_runs=10
+                        filename=filename,
+                        n_runs=10,
+                        with_KCG=True
                         )
+    
+    bmk_table               = tabulate_bmk_outputs(filename, average=False, dump=True)
+
+    plot_test_times(bmk_table, title='Poisson Regression fit to coreset', filename=filename)
