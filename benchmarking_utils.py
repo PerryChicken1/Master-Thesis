@@ -7,9 +7,14 @@ import pandas as pd
 import os
 import itertools
 import warnings
+import random
+import torch
+from sklearn.linear_model import PoissonRegressor
 from MACES import lazy_bandit
 from random import shuffle
 from collections import Counter
+from typing import Literal
+from custom_models import MLP
 
 def ensure_dir(file_path):
     """
@@ -185,22 +190,36 @@ def comprehensive_benchmark(lazy_bandit_: lazy_bandit, description: str, filenam
         lazy_bandit_.benchmark_MACES(n_runs)
 
     results_dict        = lazy_bandit_.results_dict
+    
+    # whether to add KCG results
     if with_KCG: 
-        results_dict    = add_KCG_to_results(lazy_bandit_, results_dict, n_runs)
+        if isinstance(lazy_bandit_.model, MLP): model_type='MLP'
+        elif isinstance(lazy_bandit_.model, PoissonRegressor): model_type='poisson'
+        results_dict    = add_KCG_to_results(lazy_bandit_, results_dict, n_runs, model=model_type)
+
     lazy_bandit_repr    = lazy_bandit_.__repr__()
 
     with open(folder + rf"\{filename}.pkl", "wb") as specs_file:
         pkl.dump((description, lazy_bandit_repr, results_dict), specs_file)
     
-def add_KCG_to_results(lazy_bandit_: lazy_bandit, results_dict: dict, n_runs:int) -> dict:
+        
+    bmk_table               = tabulate_bmk_outputs(filename, average=False, dump=True)
+
+    plot_test_times(bmk_table, title='Poisson Regression fit to coreset', filename=filename)
+
+    analyse_sampled_clusters(filename)
+
+    
+def add_KCG_to_results(lazy_bandit_: lazy_bandit, results_dict: dict, n_runs:int, model:Literal['MLP','poisson'] = 'poisson') -> dict:
     """
     Add previous results from KCG runs to a `results_dict` in `comprehensive_benchmark`.
-    KCG is model-invariant, so we do not need to re-run the method more than once.
+    KCG is model-invariant, so we do not need to re-run the coreset selection method more than once.
 
     Args:
         lazy_bandit_ (lazy_bandit): agent used for benchmarking
         results_dict (dict): output from `comprehensive_benchmark`
         n_runs (int): number of independent coreset selection runs
+        model (Literal['MLP','poisson']): type of model being tested
     
     Returns:
         results_dict (dict): with KCG run results added
@@ -209,17 +228,21 @@ def add_KCG_to_results(lazy_bandit_: lazy_bandit, results_dict: dict, n_runs:int
     if not all((lazy_bandit_.batch_size == 10, lazy_bandit_.test_freq == 10, lazy_bandit_.T == 4000, n_runs==10)):
         warnings.warn("Different specifications for KCG runs. Results unlikely to be compatible!")
 
+    # compute KCG test scores if model is MLP
+    # reason: MLP hyperparameters change often
+    if model == 'MLP': KCG_test_scores(lazy_bandit_, n_runs)
+
     last_key    = max(results_dict.keys())
 
     for i in range(10):
 
-        with open(rf'C:\Users\nial\Documents\GitHub\Master-Thesis\Comprehensive Benchmarks\KCG_runs\run_{i+1}.pkl', 'rb') as f:
-            KCG_run_i = pkl.load(f)
+        with open(rf'C:\Users\nial\Documents\GitHub\Master-Thesis\Comprehensive Benchmarks\KCG_runs_{model}\run_{i+1}.pkl', 'rb') as f:
+            KCG_run_i   = pkl.load(f)
         
         results_dict[i + last_key + 1] = {'which': 'KCG', 
                                           'current_run': KCG_run_i[0], 
                                           'test_times': range(100, 4001, 100), 
-                                          'test_scores':KCG_run_i[1], 
+                                          'test_scores': KCG_run_i[1], 
                                           'train_indices':KCG_run_i[2]}
     
     return results_dict
@@ -323,38 +346,94 @@ def plot_test_times(bmk_table: pd.DataFrame, title: str, filename: str):
     plt.grid(True)
     plt.savefig(folder + rf'\{filename}.png')
 
-def analyse_sampled_clusters(df_global: pd.DataFrame, filename: str) -> pd.DataFrame:
+def analyse_sampled_clusters(filename: str) -> pd.DataFrame:
     """
     Analyses the proportion of observations drawn from the K clusters in a MACES benchmarking.
 
     Args:
-        df_global (pd.DataFrame): dataframe containing data and metadata
         filename (str): filename where results stored (i.e., string passed to `comprehensive_benchmark()`)
 
     Returns:
-        cluster_analysis (pd.DataFrame): overview of number of observations drawn from each cluster
+        cluster_counts (pd.DataFrame): proportion of observations drawn from each cluster
     """
-    raise NotImplementedError('.')
-    
+    # load results
     with open(rf"C:\Users\nial\Documents\GitHub\Master-Thesis\Comprehensive Benchmarks\{filename}\{filename}.pkl", 'rb') as f:
         bmk_results = pkl.load(f)
 
+    # number of times clusters sampled
     MACES_results   = [result_dict for result_dict in bmk_results[2].values() if result_dict['which'] == 'MACES']
+    sampled_clusters= [index for d in MACES_results for index in d['sampled_C']]
+    cluster_counts  = Counter(sampled_clusters)
+
+    # size of hidden set
+    cluster_sizes   = MACES_results[0]['cluster_sizes']
+    hidden_size     = cluster_sizes.sum()
     
-    all_indices     = [index for d in MACES_results for index in d['train_indices']]
+    # convert the counts to a DataFrame
+    cluster_counts  = pd.DataFrame(list(cluster_counts.items()), columns=['cluster', 'count'])
+    cluster_counts['cluster_description']       = cluster_counts['cluster'].map(MACES_results[0]['cluster_dict'])
+    cluster_counts['proportion in coresets']    = cluster_counts['count'] / cluster_counts['count'].sum()
     
+    cluster_counts['proportion in hidden set']  = cluster_counts['cluster'].apply(
+        lambda x: cluster_sizes.loc[x] / hidden_size
+    )
+
+    # return table
+    cluster_counts  = cluster_counts.sort_values(by='count', ascending=False).reset_index(drop=True)
+
+    with open(rf"C:\Users\nial\Documents\GitHub\Master-Thesis\Comprehensive Benchmarks\{filename}\{filename}_sampled_clusters.pkl", 'wb') as f:
+        pkl.dump(cluster_counts, f)
+
+def KCG_test_scores(bandit_global: lazy_bandit, n_runs: int =10):
+    """
+    Evaluate test scores of KCG method given a bandit and store.
+
+    Args:
+        bandit_global (lazy_bandit): bandit coreset selector equipped with MLP model
+        n_runs (int): number of independent KCG runs over which to evaluate scores (likely 10)
+    """
+
+    for i in range(n_runs):
+        
+        # fix seeds
+        random.seed(i + 100)
+        np.random.seed(i + 100)
+        torch.manual_seed(i + 100)
+
+        test_scores_KCG_i = []
+
+        # get coreset indices for KCG
+        with open(rf'C:\Users\nial\Documents\GitHub\Master-Thesis\Comprehensive Benchmarks\KCG_runs_poisson\run_{i+1}.pkl', 'rb') as f:
+            run_i = pkl.load(f)
+
+        print(f"Evaluating coresets for KCG run {i+1}...")
+
+        # evaluate model at coresets
+        for j in bandit_global.test_times:
+            
+            # get coreset indices at each test time
+            coreset_indices             = run_i[2][:j]
+            bandit_global.train_indices = coreset_indices
+
+            # compute test score
+            bandit_global.compute_test_score()
+            test_score                  = bandit_global.test_scores[-1]
+            test_scores_KCG_i.append(test_score)
+
+            # reset model        
+            bandit_global.reset()
+
+        # store run number, test scores, coreset indices
+        with open(rf'C:\Users\nial\Documents\GitHub\Master-Thesis\Comprehensive Benchmarks\KCG_runs_MLP\run_{i+1}.pkl', 'wb') as f:
+            pkl.dump((run_i[0], test_scores_KCG_i, run_i[2]), file=f)
 
 
-    # Map the indices to their clusters using df_global
-    cluster_lookup  = df_global.index[cluster_col].to_dict()
-    
-    # Get the corresponding clusters for each coreset index
-    clusters = [cluster_lookup.get(idx) for idx in all_indices if idx in cluster_lookup]
-    
-    # Count occurrences of each cluster
-    cluster_counts = Counter(clusters)
-    
-    # Convert the counts to a DataFrame
-    df_counts = pd.DataFrame(list(cluster_counts.items()), columns=[cluster_col, 'count'])
-    
-    return df_counts.sort_values(by='count', ascending=False).reset_index(drop=True)
+
+
+
+        
+
+
+        
+        
+

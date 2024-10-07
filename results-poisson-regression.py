@@ -48,7 +48,3 @@ if __name__ == '__main__':
                         n_runs=10,
                         with_KCG=True
                         )
-    
-    bmk_table               = tabulate_bmk_outputs(filename, average=False, dump=True)
-
-    plot_test_times(bmk_table, title='Poisson Regression fit to coreset', filename=filename)

@@ -116,6 +116,7 @@ def benchmark_vc_booster(df_global: pd.DataFrame, VCBooster: VCBooster, x: list 
         
             print(f"Evaluation {i+1} / {n_runs} of MACES. T = {T}")
 
+            # reinstantiating MACES is equivalent to a strong reset
             MACES       = lazy_bandit(df_global, x, y, features, hidden_indices, test_indices, val_indices, T, 1, 100, LinearRegression())
             MACES.run_MACES()
 

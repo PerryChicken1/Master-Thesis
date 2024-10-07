@@ -126,13 +126,14 @@ class MLP(resettable_model):
         Instantiate model layers.
         """
         layers = nn.Sequential(
-                        nn.Linear(self.n_predictors, 64),
+                        nn.Linear(self.n_predictors, 32),
                         nn.ReLU(),
-                        nn.Linear(64, 32),
+                        nn.Linear(32,16),
                         nn.ReLU(),
-                        nn.Linear(32, 1),
+                        nn.Linear(16, 1),
                         nn.Softplus()
                         )
+
         return layers
     
     def forward(self, x):
@@ -159,7 +160,7 @@ class MLP(resettable_model):
 
         self.train()
 
-        optimiser       = Adam(self.parameters(), lr=self.lr)
+        optimiser       = Adam(self.parameters(), lr=self.lr, weight_decay=1e-3)
         loss_fn         = self.loss_fn
 
         if self.with_scheduler: 

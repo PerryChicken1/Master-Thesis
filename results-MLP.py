@@ -23,10 +23,11 @@ if __name__ == '__main__':
     y                       = 'agbd'
     features                = {'region_cla':None, 'elev_lowes':3, 'selected_a': None}
 
-    # MABS parameters
+    # MACES parameters
     T                       = 4000
     batch_size              = 10
     test_freq               = 10
+    n_runs                  = 10
 
     # model
     n_predictors            = len(x)
@@ -41,14 +42,16 @@ if __name__ == '__main__':
     bandit_global           = lazy_bandit(dataset=df_global, x=x, y=y, features=features, hidden_indices=hidden_indices
                                       , test_indices=test_indices, val_indices=val_indices, T=T, batch_size=batch_size
                                       , test_freq=test_freq, model=model)
+    
+    filename                = 'mlp-bmk'
 
     ####################################################################
     # RUN                                                              #
     ####################################################################
 
     comprehensive_benchmark(lazy_bandit_=bandit_global, 
-                        description='MLP Comprehensive Bmk',
-                        filename='mlp-bmk',
-                        n_runs=10,
-                        with_KCG=True
+                        description='MLP Comprehensive Bmk: 12-> 32 -> 16 -> 1',
+                        filename=filename,
+                        n_runs=n_runs,
+                        with_KCG=True #TODO
                         )

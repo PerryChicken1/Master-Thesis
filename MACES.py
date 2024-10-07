@@ -59,10 +59,6 @@ class bandit:
         self.test_freq_t        = test_freq * batch_size
 
         # instantiate lists
-        self.hidden_indices     = []
-        self.test_indices       = []
-        self.val_indices        = []
-        self.train_indices      = []
         self.clusters           = []
         self.prev_score         = -np.infty
         self.current_score      = -np.infty
@@ -114,11 +110,11 @@ class bandit:
 
         # numeric
         if ptypes.is_numeric_dtype(cluster_column):
-            
+
             # use only hidden observations to determine clusters
             cluster_col_hidden  = cluster_column[self.dataset.index.isin(self.hidden_indices)]
             _, bins_h           = pd.qcut(cluster_col_hidden, q=n_bins, labels=False, duplicates='drop', retbins=True)
-            bins_h              = pd.unique(bins_h)   
+            bins_h              = np.sort(bins_h)
             cluster_ids         = pd.cut(cluster_column, bins=bins_h, labels=False, include_lowest=True)
 
             # continuous
@@ -228,6 +224,7 @@ class bandit:
         self.hidden_indices = hidden_indices.index.tolist()
         self.test_indices   = test_indices.index.tolist()
         self.val_indices    = val_indices.index.tolist()
+        self.train_indices  = []
 
     def t_v_shuffle(self):
         """
@@ -347,10 +344,10 @@ class bandit:
             X_train = X_train.reshape(-1, 1)
             X_test  = X_test.reshape(-1,1)
 
-        # double epoch number for evaluation
-        if isinstance(self.model, MLP): self.model.num_epochs *= 2
+        # (REMOVED) double epoch number for evaluation
+        # if isinstance(self.model, MLP): self.model.num_epochs *= 2
         self.model.fit(X_train, y_train)
-        if isinstance(self.model, MLP): self.model.num_epochs //= 2
+        # if isinstance(self.model, MLP): self.model.num_epochs //= 2
 
         y_test_hat  = self.model.predict(X_test)
 
@@ -404,8 +401,7 @@ class bandit:
 
         self.prev_score         = -np.infty
         self.current_score      = -np.infty
-        self.alphas             = np.ones(self.num_clusters_)
-        self.betas              = np.ones(self.num_clusters_)
+        self.instantiate_priors()
 
         # reinit model, if possible
         try: self.model.reinit_model()
@@ -679,7 +675,13 @@ class bandit:
             self.reset()
             if which == 'MACES': self.run_MACES()
             elif which == 'rb': self.run_random_baseline()
-            elif which == 'full': self.run_full_model()
+            elif which == 'full':
+                # adapt lr for full model
+                self.model.lr       /= 100 #1e-2 -> 1e-4
+                self.model.init_lr  /= 100
+                self.run_full_model()
+                self.model.lr       *= 100
+                self.model.init_lr  *= 100
             elif which == 'TORRENT': self.run_TORRENT()
             elif which == 'KCG': self.run_k_centers_greedy()
             elif which == 'LL': self.run_LL()
@@ -793,7 +795,10 @@ class bandit:
             train_indices   = list()
 
         results_dict_i      = {'which': which, 'current_run': current_run, 'test_times':self.test_times,
-                              'test_scores': test_scores, 'train_indices': train_indices, 'sampled_clusters':self.sampled_C}
+                              'test_scores': test_scores, 'train_indices': train_indices}
+        
+        if which == 'MACES': 
+            results_dict_i['sampled_C']         = self.sampled_C[:]
 
         self.results_dict[self.results_idx]     = results_dict_i
         
@@ -945,7 +950,7 @@ class ND_bandit(bandit):
         # retain ND clusters
         self.clusters                           = [('ND_cluster', value) for value in unique_combinations['ND_cluster'].unique()]
         self.dataset                            = dataset_merged
-        self.cluster_sizes                      = self.dataset[self.dataset.index.isin(self.hidden_indices)].value_counts()
+        self.cluster_sizes                      = self.dataset[self.dataset.index.isin(self.hidden_indices)]['ND_cluster'].value_counts()
 
     def under_the_hood(self, pi:np.ndarray, j:int, current_score: float, prev_score: float, r:float):
         """
@@ -1021,8 +1026,12 @@ class ND_bandit(bandit):
             train_indices   = list()
 
         results_dict_i      = {'which': which, 'current_run': current_run, 'test_times':self.test_times,
-                              'test_scores': test_scores, 'train_indices': train_indices, 'sampled_clusters':self.sampled_C
-                              , 'cluster_dict': self.cluster_dict, 'cluster_sizes': self.cluster_sizes}
+                              'test_scores': test_scores, 'train_indices': train_indices}
+        
+        if which == 'MACES':
+            results_dict_i['sampled_C'] = self.sampled_C[:]
+            results_dict_i['cluster_dict'] = self.cluster_dict
+            results_dict_i['cluster_sizes'] = self.cluster_sizes
 
         self.results_dict[self.results_idx]     = results_dict_i
         
@@ -1054,14 +1063,14 @@ class lazy_bandit(ND_bandit):
             test_freq: frequency (in batches) at which to evaluate the model fit on test set
             model: object with fit() and predict() methods
         """
-
-        super().__init__(dataset, x, y, features, T, batch_size, 0, 0, 0, test_freq, model)
-        
         # copy to avoid mutation issues
         self.init_hidden_indices= hidden_indices[:]
         self.hidden_indices     = hidden_indices
         self.test_indices       = test_indices
         self.val_indices        = val_indices
+        self.train_indices      = []
+
+        super().__init__(dataset, x, y, features, T, batch_size, 0, 0, 0, test_freq, model)
 
     def ttv_split(self):
         """
