@@ -1,12 +1,42 @@
 import numpy as np
 import pandas as pd
 import pickle as pkl
+import pandas.api.types as ptypes
+import os
 from sklearn.metrics import mean_squared_error
+from sklearn.linear_model import PoissonRegressor
+from sklearn.preprocessing import MinMaxScaler
 from MACES import lazy_bandit
 from benchmarking_utils import tabulate_bmk_outputs, plot_test_times
 from custom_ttv_split import load_data, get_ttv_indices
 from custom_models import MLP
 from torch import nn
+
+# dummy-encode categorical variables prior to modelling
+
+def dummy_encode(df_global: pd.DataFrame, features: dict):
+    """
+    Encode categorical variables in `df_global` as dummies.
+
+    Args:
+        df_global (pd.DataFrame): dataset containing effect modifiers in `features.keys()` as columns.
+        features (dict): dictionary of {feature_column: number categories}
+    
+    Returns:
+        df_global (pd.DataFrame): dataset with dummy variable columns added.
+    """
+    assert not any([col.__contains__('dummy_') for col in df_global.columns]), 'Dummy encoding already provided'
+
+    for feature in features.keys():
+
+        # if categorical
+        if ptypes.is_categorical_dtype(df_global[feature]):
+            
+            dummies     = pd.get_dummies(df_global[feature], prefix='dummy_' + feature, drop_first=True)
+            df_global   = pd.concat([df_global, dummies], axis=1)
+    
+    return df_global
+
 
 # evaluate the MLP when metadata are included as predictors alongside x
 
@@ -35,22 +65,60 @@ def model_with_metadata_bmk(df_global: pd.DataFrame, x: list | str, y: str, feat
     """
     # folder to store results
     folder          = rf"C:\Users\nial\Documents\GitHub\Master-Thesis\Comprehensive Benchmarks\{filename}"
-    plot_title      = 'MLP(m, x) with random selector'
-    
+    os.makedirs(folder, exist_ok=True)
+    plot_title      = description
+
+    # dummy encode categorical variables
+    df_global       = dummy_encode(df_global, features)
+
+    # scale elevation to (0,1)
+    # quick and dirty approach :')
+    scaler                      = MinMaxScaler()
+    df_global['elev_lowes']     = scaler.fit_transform(df_global[['elev_lowes']])
+
+
     # add metadata to predictors
     if isinstance(x, str): 
-        x           =   [x]
+        x           = [x]
+    
+    x_original      = x[:]
 
-    x               = x + [m for m in features.keys()]
+    #   add dummy columns
+    x               = x + [m for m in df_global.columns if 'dummy_' in m]
+
+    #   add numeric metadata
+    x               = x + [m for m in features.keys() if ptypes.is_numeric_dtype(df_global[m])]
+    
+    #   count predictors
     n_predictors    = len(x)
+    print(x)
 
     # instantiate bandit
-    model           = MLP(n_predictors, num_epochs, lr, print_freq, with_scheduler, loss_fn)
+    # model           = MLP(n_predictors, num_epochs, lr, print_freq, with_scheduler, loss_fn)
+    model           = PoissonRegressor()
     bandit          = lazy_bandit(df_global, x, y, features, hidden_indices, test_indices, val_indices, T, batch_size, test_freq, model) 
 
     # evaluate test performance with random selection + metadata
     bandit.eval_test_performance(n_runs, 'rb')
+
+    # evaluate test performace with MACES + metadata
+    bandit.eval_test_performance(n_runs, 'MACES')
     results_dict    = bandit.results_dict
+
+    # evaluate test performance with MACES, no metadata
+    bandit          = lazy_bandit(df_global, x_original, y, features, hidden_indices, test_indices, val_indices, T, batch_size, test_freq, model) 
+    bandit.eval_test_performance(n_runs, 'MACES')
+    results_dict_2  = bandit.results_dict
+
+    # merge results dictionaries into one
+    key_offset      = max(results_dict.keys()) + 1
+    results_dict_2  = {(key + key_offset ):value for key, value in results_dict_2.items()}
+    
+    for key, value in results_dict.items():
+        if value['which']  == 'MACES':
+            results_dict[key]['which']  == 'MACES-with-m'
+
+    results_dict    = results_dict | results_dict_2
 
     # store results
     lazy_bandit_repr= bandit.__repr__()
@@ -76,13 +144,13 @@ if __name__ == '__main__':
     # features
     x                       = ["B01","B02","B03","B04","B05","B06","B07","B08","B8A","B09","B11","B12"]
     y                       = 'agbd'
-    features                = {'region_cla':None, 'elev_lowes':3, 'selected_a': None}
+    features                = {'elev_lowes':3, 'region_cla':None, 'selected_a': None}
 
     # MACES parameters
-    T                       = 4000
+    T                       = 100
     batch_size              = 10
-    test_freq               = 10
-    n_runs                  = 10
+    test_freq               = 2
+    n_runs                  = 2
 
     # model
     n_predictors            = len(x)
@@ -91,15 +159,16 @@ if __name__ == '__main__':
     print_freq              = 10
     with_scheduler          = False
     loss_fn                 = nn.MSELoss()
-    model                   = MLP(n_predictors, num_epochs, lr, print_freq, with_scheduler, loss_fn)
+    # model                   = MLP(n_predictors, num_epochs, lr, print_freq, with_scheduler, loss_fn)
+    model                   = PoissonRegressor()
 
     # agent
     bandit_global           = lazy_bandit(dataset=df_global, x=x, y=y, features=features, hidden_indices=hidden_indices
                                       , test_indices=test_indices, val_indices=val_indices, T=T, batch_size=batch_size
                                       , test_freq=test_freq, model=model)
     
-    filename                = 'results-metadata-in-model'
-    description             = 'Evaluating MLP(m, x)'
+    filename                = 'results-trio-poisson'
+    description             = 'Evaluating Poisson(m, x)'
 
     ####################################################################
     # RUN                                                              #

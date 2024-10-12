@@ -178,23 +178,23 @@ class bandit:
         return_tup = tuple()
 
         if 'hidden' in parts:
-            X_hidden    = self.dataset[self.dataset.index.isin(self.hidden_indices)][self.x].to_numpy()
-            y_hidden    = self.dataset[self.dataset.index.isin(self.hidden_indices)][self.y].to_numpy()
+            X_hidden    = self.dataset[self.dataset.index.isin(self.hidden_indices)][self.x].to_numpy(dtype='float32')
+            y_hidden    = self.dataset[self.dataset.index.isin(self.hidden_indices)][self.y].to_numpy(dtype='float32')
             return_tup  = (*return_tup, X_hidden, y_hidden)
 
         if 'train' in parts:
-            X_train     = self.dataset[self.dataset.index.isin(self.train_indices)][self.x].to_numpy()
-            y_train     = self.dataset[self.dataset.index.isin(self.train_indices)][self.y].to_numpy()
+            X_train     = self.dataset[self.dataset.index.isin(self.train_indices)][self.x].to_numpy(dtype='float32')
+            y_train     = self.dataset[self.dataset.index.isin(self.train_indices)][self.y].to_numpy(dtype='float32')
             return_tup  = (*return_tup, X_train, y_train)
         
         if 'test' in parts:
-            X_test      = self.dataset[self.dataset.index.isin(self.test_indices)][self.x].to_numpy()
-            y_test      = self.dataset[self.dataset.index.isin(self.test_indices)][self.y].to_numpy()
+            X_test      = self.dataset[self.dataset.index.isin(self.test_indices)][self.x].to_numpy(dtype='float32')
+            y_test      = self.dataset[self.dataset.index.isin(self.test_indices)][self.y].to_numpy(dtype='float32')
             return_tup  = (*return_tup, X_test, y_test)
 
         if 'validation' in parts:
-            X_val       = self.dataset[self.dataset.index.isin(self.val_indices)][self.x].to_numpy()
-            y_val       = self.dataset[self.dataset.index.isin(self.val_indices)][self.y].to_numpy()
+            X_val       = self.dataset[self.dataset.index.isin(self.val_indices)][self.x].to_numpy(dtype='float32')
+            y_val       = self.dataset[self.dataset.index.isin(self.val_indices)][self.y].to_numpy(dtype='float32')
             return_tup  = (*return_tup, X_val, y_val)
 
         return return_tup

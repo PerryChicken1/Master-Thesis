@@ -313,10 +313,10 @@ def plot_test_times(bmk_table: pd.DataFrame, title: str, filename: str):
     plt.figure(figsize=(10, 6))
     plt.xlim(min(time_points), max(time_points))
     
-    algorithm_names =  {'full': 'Full dataset', 'rb': 'Random selector', 'TORRENT': 'TORRENT Algorithm', 'MACES': 'MACES Algorithm'\
-                        , 'mds': 'Metadata Selector', 'KCG': 'KCG Algorithm', 'LL': 'Loss Learner Algorithm'}
+    algorithm_names =  {'full': 'Hidden dataset', 'rb': 'Random selector', 'TORRENT': 'TORRENT Algorithm', 'MACES': 'MACES Algorithm'\
+                        , 'mds': 'Metadata selector', 'KCG': 'KCG Algorithm', 'LL': 'Loss Learner Algorithm', 'MACES-with-m':'MACES Algorithm w/ metadata'}
     colours         = {'full': 'black', 'rb': 'coral', 'TORRENT': 'violet', 'MACES': 'lightseagreen'\
-                       , 'mds': 'mediumspringgreen', 'KCG': 'gold', 'LL': 'lightpink'}
+                       , 'mds': 'mediumspringgreen', 'KCG': 'gold', 'LL': 'lightpink', 'MACES-with-m': 'lightgrey'}
         
     # plot lines iteratively
     for which, group in groups:
@@ -325,26 +325,31 @@ def plot_test_times(bmk_table: pd.DataFrame, title: str, filename: str):
         
         # mean line
         mean_scores = test_times.mean(axis=0)
+        # uncertainty region => mean +- sd
+
+        std_scores  = np.std(test_times, axis=0)
+        lower_bound = mean_scores - std_scores
+        upper_bound = mean_scores + std_scores
         
-        # 'uncertainty' region => 2nd highest and 2nd lowest scores 
-        sorted_scores   = np.sort(test_times, axis=0)
-        second_lowest   = sorted_scores[1, :]
-        second_highest  = sorted_scores[-2, :]
+        #'uncertainty' region => 2nd highest and 2nd lowest scores 
+        #sorted_scores   = np.sort(test_times, axis=0)
+        #second_lowest   = sorted_scores[1, :]
+        #second_highest  = sorted_scores[-2, :]
         
         # dotted line for methods with fixed training data size
-        linestyle       = '--' if algorithm_name in ['Full dataset', 'TORRENT Algorithm'] else '-'
+        linestyle       = '--' if algorithm_name in ['Hidden dataset', 'TORRENT Algorithm'] else '-'
         plt.plot(time_points, mean_scores, label=algorithm_name, linewidth=2.5, linestyle=linestyle, color=colours[which])
         
         # uncertainty shaded region
-        plt.fill_between(time_points, second_lowest, second_highest, alpha=0.3, color=colours[which])
+        plt.fill_between(time_points, lower_bound, upper_bound, alpha=0.3, color=colours[which])
     
     plt.xlabel('Coreset size')
     plt.ylabel('Mean squared prediction error')
     plt.suptitle('Prediction error on holdout test set')
     plt.title(title)
-    plt.legend(title='Coreset selection algorithms')
+    plt.legend(title='Coreset selection methods')
     plt.grid(True)
-    plt.savefig(folder + rf'\{filename}.png')
+    plt.savefig(folder + rf'\{filename}.png', dpi=500, bbox_inches='tight')
 
 def analyse_sampled_clusters(filename: str) -> pd.DataFrame:
     """
