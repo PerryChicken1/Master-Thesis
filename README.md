@@ -1,5 +1,13 @@
+# MACES: the Multi-Armed CorEset Selector
+
 This is the repository for the multi-armed coreset selector (MACES) method, conceived for my master's thesis project at ETH Zürich.
 
+The multi-armed coreset selector combines insights from the multi-armed bandit and active learning frameworks to construct a coreset. In a single sentence: MACES involves partitioning the data T into J
+clusters according to the metadata m, then training an agent to optimally sample from the J clusters in order to construct a coreset. 
+
+Credit to https://arxiv.org/abs/1705.08111 for the inspiration.
+
+____________________________________________
 Here are examples of how to do a few things:
 
 ### Reproducing results from the manuscript
