@@ -41,9 +41,8 @@ def dummy_encode(df_global: pd.DataFrame, features: dict):
 # evaluate the MLP when metadata are included as predictors alongside x
 
 def model_with_metadata_bmk(df_global: pd.DataFrame, x: list | str, y: str, features: dict, hidden_indices: list, test_indices: list, val_indices: list 
-                               , T: int=4000, batch_size: int=10, test_freq: int=10, n_runs: int=10
-                               , num_epochs: int=5, lr: float=0.01, print_freq: int=10, with_scheduler: bool=False, loss_fn: nn.Module=nn.MSELoss(), filename: str='results-metadata-in-model'
-                               , description: str='Evaluating MLP(m, x)'):
+                               , T: int=4000, batch_size: int=10, test_freq: int=10, n_runs: int=10,
+                               filename: str='results-metadata-in-model', description: str='Evaluating MLP(m, x)'):
     """
     Function to compare inputting metadata into the MLP vs coreset selection using the metadata.
 
@@ -89,12 +88,10 @@ def model_with_metadata_bmk(df_global: pd.DataFrame, x: list | str, y: str, feat
     #   add numeric metadata
     x               = x + [m for m in features.keys() if ptypes.is_numeric_dtype(df_global[m])]
     
-    #   count predictors
-    n_predictors    = len(x)
-    print(x)
+    #   print predictors
+    print("x = ", x)
 
     # instantiate bandit
-    # model           = MLP(n_predictors, num_epochs, lr, print_freq, with_scheduler, loss_fn)
     model           = PoissonRegressor()
     bandit          = lazy_bandit(df_global, x, y, features, hidden_indices, test_indices, val_indices, T, batch_size, test_freq, model) 
 
@@ -106,6 +103,7 @@ def model_with_metadata_bmk(df_global: pd.DataFrame, x: list | str, y: str, feat
     results_dict    = bandit.results_dict
 
     # evaluate test performance with MACES, no metadata
+    print("x_original =", x_original)
     bandit          = lazy_bandit(df_global, x_original, y, features, hidden_indices, test_indices, val_indices, T, batch_size, test_freq, model) 
     bandit.eval_test_performance(n_runs, 'MACES')
     results_dict_2  = bandit.results_dict
@@ -116,7 +114,7 @@ def model_with_metadata_bmk(df_global: pd.DataFrame, x: list | str, y: str, feat
     
     for key, value in results_dict.items():
         if value['which']  == 'MACES':
-            results_dict[key]['which']  == 'MACES-with-m'
+            results_dict[key]['which']  = 'MACES-with-m'
 
     results_dict    = results_dict | results_dict_2
 
@@ -144,22 +142,15 @@ if __name__ == '__main__':
     # features
     x                       = ["B01","B02","B03","B04","B05","B06","B07","B08","B8A","B09","B11","B12"]
     y                       = 'agbd'
-    features                = {'elev_lowes':3, 'region_cla':None, 'selected_a': None}
+    features                = {"elev_lowes": 3, "pft_class": None, "region_cla": None}
 
     # MACES parameters
-    T                       = 100
+    T                       = 4000
     batch_size              = 10
-    test_freq               = 2
-    n_runs                  = 2
+    test_freq               = 10
+    n_runs                  = 10
 
     # model
-    n_predictors            = len(x)
-    num_epochs              = 5
-    lr                      = 0.01
-    print_freq              = 10
-    with_scheduler          = False
-    loss_fn                 = nn.MSELoss()
-    # model                   = MLP(n_predictors, num_epochs, lr, print_freq, with_scheduler, loss_fn)
     model                   = PoissonRegressor()
 
     # agent
@@ -175,4 +166,4 @@ if __name__ == '__main__':
     ####################################################################
 
     model_with_metadata_bmk(df_global, x, y, features, hidden_indices, test_indices, val_indices, T, batch_size, test_freq
-                            , n_runs, num_epochs, lr, print_freq, with_scheduler, loss_fn, filename)
+                            , n_runs, filename=filename, description=description)

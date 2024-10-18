@@ -314,9 +314,9 @@ def plot_test_times(bmk_table: pd.DataFrame, title: str, filename: str):
     plt.xlim(min(time_points), max(time_points))
     
     algorithm_names =  {'full': 'Hidden dataset', 'rb': 'Random selector', 'TORRENT': 'TORRENT Algorithm', 'MACES': 'MACES Algorithm'\
-                        , 'mds': 'Metadata selector', 'KCG': 'KCG Algorithm', 'LL': 'Loss Learner Algorithm', 'MACES-with-m':'MACES Algorithm w/ metadata'}
+                        , 'mds': 'Metadata selector', 'KCG': 'KCG Algorithm', 'LL': 'Loss Learner Algorithm', 'MACES-with-m':'MACES Algorithm + f(x,m)'}
     colours         = {'full': 'black', 'rb': 'coral', 'TORRENT': 'violet', 'MACES': 'lightseagreen'\
-                       , 'mds': 'mediumspringgreen', 'KCG': 'gold', 'LL': 'lightpink', 'MACES-with-m': 'lightgrey'}
+                       , 'mds': 'mediumspringgreen', 'KCG': 'gold', 'LL': 'lightpink', 'MACES-with-m': 'slategray'}
         
     # plot lines iteratively
     for which, group in groups:
@@ -347,9 +347,9 @@ def plot_test_times(bmk_table: pd.DataFrame, title: str, filename: str):
     plt.ylabel('Mean squared prediction error')
     plt.suptitle('Prediction error on holdout test set')
     plt.title(title)
-    plt.legend(title='Coreset selection methods')
+    plt.legend(title='Method')
     plt.grid(True)
-    plt.savefig(folder + rf'\{filename}.png', dpi=500, bbox_inches='tight')
+    plt.savefig(folder + rf'\{filename}.jpg', dpi=500, bbox_inches='tight')
 
 def analyse_sampled_clusters(filename: str) -> pd.DataFrame:
     """
