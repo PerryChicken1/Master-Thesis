@@ -2,9 +2,12 @@ import numpy as np
 import pandas as pd
 from sklearn.linear_model import PoissonRegressor
 from sklearn.metrics import mean_squared_error
-from MACES import lazy_bandit
-from benchmarking_utils import comprehensive_benchmark, tabulate_bmk_outputs, plot_test_times
-from custom_ttv_split import load_data, get_ttv_indices
+from MACES_and_Benchmark_Methods.MACES import lazy_bandit
+from Models_and_Helper_Functions.benchmarking_utils import comprehensive_benchmark, tabulate_bmk_outputs, plot_test_times
+from Models_and_Helper_Functions.custom_ttv_split import load_data, get_ttv_indices
+
+# Run as __main__ to reproduce results for section 4.1, Poisson regression task
+# Benchmarks coreset selectors on poisson regression task
 
 if __name__ == '__main__':
 

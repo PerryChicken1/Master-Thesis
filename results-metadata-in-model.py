@@ -6,13 +6,15 @@ import os
 from sklearn.metrics import mean_squared_error
 from sklearn.linear_model import PoissonRegressor
 from sklearn.preprocessing import MinMaxScaler
-from MACES import lazy_bandit
-from benchmarking_utils import tabulate_bmk_outputs, plot_test_times
-from custom_ttv_split import load_data, get_ttv_indices
-from custom_models import MLP
+from MACES_and_Benchmark_Methods.MACES import lazy_bandit
+from Models_and_Helper_Functions.benchmarking_utils import tabulate_bmk_outputs, plot_test_times
+from Models_and_Helper_Functions.custom_ttv_split import load_data, get_ttv_indices
+from Models_and_Helper_Functions.custom_models import MLP
 from torch import nn
 
-# dummy-encode categorical variables prior to modelling
+# Run as __main__ to reproduce results for section 4.2, Poisson regression task
+# Compares metadata in model vs metadata for coreset selection
+
 
 def dummy_encode(df_global: pd.DataFrame, features: dict):
     """

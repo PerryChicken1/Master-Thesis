@@ -1,11 +1,14 @@
 import numpy as np
 import pandas as pd
 from sklearn.metrics import mean_squared_error
-from MACES import lazy_bandit
-from benchmarking_utils import comprehensive_benchmark
-from custom_ttv_split import load_data, get_ttv_indices
-from custom_models import MLP
+from MACES_and_Benchmark_Methods.MACES import lazy_bandit
+from Models_and_Helper_Functions.benchmarking_utils import comprehensive_benchmark
+from Models_and_Helper_Functions.custom_ttv_split import load_data, get_ttv_indices
+from Models_and_Helper_Functions.custom_models import MLP
 from torch import nn
+
+# Run as __main__ to reproduce results for section 4.1, MLP task
+# Benchmarks coreset selectors on poisson regression task
 
 if __name__ == '__main__':
 
@@ -53,5 +56,5 @@ if __name__ == '__main__':
                         description='MLP Comprehensive Bmk: 12-> 32 -> 16 -> 1',
                         filename=filename,
                         n_runs=n_runs,
-                        with_KCG=True #TODO
+                        with_KCG=True
                         )

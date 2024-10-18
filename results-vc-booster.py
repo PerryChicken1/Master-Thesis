@@ -5,12 +5,15 @@ import pickle as pkl
 import os
 import pandas.api.types as ptypes
 from sklearn.linear_model import LinearRegression
-from MACES import lazy_bandit
+from MACES_and_Benchmark_Methods.MACES import lazy_bandit
 from sklearn.metrics import mean_squared_error
 from matplotlib import pyplot as plt
-from vc_boost_method import VCBooster
-from vc_boost_loss import LS
-from custom_ttv_split import load_data, get_ttv_indices
+from MACES_and_Benchmark_Methods.vc_boost_method import VCBooster
+from MACES_and_Benchmark_Methods.vc_boost_loss import LS
+from Models_and_Helper_Functions.custom_ttv_split import load_data, get_ttv_indices
+
+# Run as __main__ to reproduce results for section 4.2, VCM task
+# Compares VCM vs linear regression with MACES
 
 def dummy_encode(df_global: pd.DataFrame, features: dict):
     """
