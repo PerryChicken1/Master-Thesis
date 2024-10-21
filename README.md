@@ -5,8 +5,7 @@ This is the repository for the multi-armed coreset selector (MACES) method, conc
 The multi-armed coreset selector combines insights from the multi-armed bandit and active learning frameworks to construct a coreset. In a single sentence: MACES involves partitioning the data T into J
 clusters according to the metadata m, then training an agent to optimally sample from the J clusters in order to construct a coreset. 
 
-Credit to https://arxiv.org/abs/1705.08111 for the inspiration.
-
+All results are obtained with dataframe `df_global` - contact me for the data :)
 ____________________________________________
 Here are examples of how to do a few things:
 
@@ -37,3 +36,5 @@ lazy_bandit_instance.run_MACES() # takes time...
 coreset_indices      = lazy_bandit_instance.train_indices
 coreset              = dataset[dataset.index.isin(coreset_indices)]
 ```
+____________________________________________
+Credit to https://arxiv.org/abs/1705.08111 for the inspiration for MACES. Also to Github users mephisto405, sply88 and fschur, from whom I adapted the implementation of various methods as benchmarks.
